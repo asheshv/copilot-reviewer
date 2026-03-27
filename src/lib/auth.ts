@@ -119,12 +119,22 @@ export async function exchangeSessionToken(oauthToken: string): Promise<SessionT
   // Start a new refresh
   refreshPromise = (async () => {
     try {
-      const response = await fetch("https://api.github.com/copilot_internal/v2/token", {
-        headers: {
-          Authorization: `Token ${oauthToken}`,
-          Accept: "application/json",
-        },
-      });
+      let response: Response;
+      try {
+        response = await fetch("https://api.github.com/copilot_internal/v2/token", {
+          headers: {
+            Authorization: `Token ${oauthToken}`,
+            Accept: "application/json",
+          },
+        });
+      } catch (err) {
+        throw new AuthError(
+          "exchange_failed",
+          `Network error during token exchange: ${err instanceof Error ? err.message : String(err)} (token: ${redactToken(oauthToken)})`,
+          false,
+          err instanceof Error ? err : undefined
+        );
+      }
 
       if (!response.ok) {
         throw new AuthError(
@@ -134,13 +144,44 @@ export async function exchangeSessionToken(oauthToken: string): Promise<SessionT
         );
       }
 
-      const data = (await response.json()) as { token: string; expires_at: number };
+      let rawData: unknown;
+      try {
+        rawData = await response.json();
+      } catch (err) {
+        throw new AuthError(
+          "exchange_failed",
+          `Invalid JSON response from token exchange (token: ${redactToken(oauthToken)})`,
+          false,
+          err instanceof Error ? err : undefined
+        );
+      }
+
+      // Validate response schema before caching
+      const data = rawData as Record<string, unknown>;
+      if (
+        !data ||
+        typeof data.token !== "string" ||
+        data.token.length === 0 ||
+        typeof data.expires_at !== "number" ||
+        data.expires_at <= 0
+      ) {
+        throw new AuthError(
+          "exchange_failed",
+          `Invalid token exchange response schema (token: ${redactToken(oauthToken)})`,
+          false
+        );
+      }
+
       cachedSession = {
-        token: data.token,
-        expires_at: data.expires_at,
+        token: data.token as string,
+        expires_at: data.expires_at as number,
       };
 
       return cachedSession;
+    } catch (err) {
+      // Clear stale cache on any error
+      cachedSession = null;
+      throw err;
     } finally {
       // Clear the mutex promise
       refreshPromise = null;

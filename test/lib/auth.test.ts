@@ -150,6 +150,19 @@ describe("resolveToken", () => {
     });
   });
 
+  it("handles malformed JSON in config files gracefully", async () => {
+    delete process.env.GITHUB_TOKEN;
+
+    mockReadFile.mockResolvedValueOnce("{ invalid json }"); // hosts.json malformed
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com": { oauth_token: "gho_fallback" } })
+    );
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_fallback");
+    expect(mockReadFile).toHaveBeenCalledTimes(2);
+  });
+
   it("expands ~ via os.homedir() for config paths", async () => {
     delete process.env.GITHUB_TOKEN;
     const homeDir = os.homedir();
@@ -297,6 +310,84 @@ describe("exchangeSessionToken", () => {
     expect(result2.token).toBe("sess_shared");
     expect(result3.token).toBe("sess_shared");
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("wraps network errors as AuthError exchange_failed", async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockRejectedValueOnce(new TypeError("fetch failed"));
+
+    try {
+      await exchangeSessionToken("gho_network_test1234");
+      expect.fail("Should have thrown AuthError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(AuthError);
+      expect(err).toMatchObject({
+        code: "exchange_failed",
+        recoverable: false,
+      });
+      expect((err as AuthError).message).toContain("Network error");
+      expect((err as AuthError).cause).toBeInstanceOf(TypeError);
+    }
+  });
+
+  it("throws AuthError on invalid response schema", async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ invalid: "response" }),
+    } as Response);
+
+    try {
+      await exchangeSessionToken("gho_schema_test1234");
+      expect.fail("Should have thrown AuthError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(AuthError);
+      expect(err).toMatchObject({
+        code: "exchange_failed",
+        recoverable: false,
+      });
+      expect((err as AuthError).message).toContain("Invalid token exchange response schema");
+    }
+  });
+
+  it("clears stale cache on exchange error", async () => {
+    const mockFetch = vi.mocked(global.fetch);
+
+    // First: successful exchange
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        token: "sess_will_expire",
+        expires_at: Math.floor(Date.now() / 1000) - 1, // Already expired
+      }),
+    } as Response);
+    await exchangeSessionToken("gho_test1234567890");
+
+    // Second: exchange fails (HTTP error)
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+    } as Response);
+
+    try {
+      await exchangeSessionToken("gho_test1234567890");
+    } catch {
+      // expected
+    }
+
+    // Third: should attempt fresh fetch (cache was cleared on error)
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        token: "sess_fresh",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    } as Response);
+
+    const result = await exchangeSessionToken("gho_test1234567890");
+    expect(result.token).toBe("sess_fresh");
+    expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
   it("throws AuthError exchange_failed on HTTP error", async () => {
