@@ -226,6 +226,47 @@ describe("resolveToken", () => {
     expect(token).toBe("gho_nonobj_fallback");
   });
 
+  it("matches github.com:PORT keys (Copilot config format)", async () => {
+    delete process.env.GITHUB_TOKEN;
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com:443": { oauth_token: "gho_port_token" } })
+    );
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_port_token");
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it("handles config file containing primitive JSON (number, boolean)", async () => {
+    delete process.env.GITHUB_TOKEN;
+    mockReadFile.mockResolvedValueOnce("42");    // hosts.json = number
+    mockReadFile.mockResolvedValueOnce("true");  // apps.json = boolean
+    mockExecFile.mockImplementation((file, args, callback: any) => {
+      callback(null, { stdout: "gho_after_primitive\n", stderr: "" });
+      return {} as any;
+    });
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_after_primitive");
+  });
+
+  it("skips config entries where oauth_token is not a string", async () => {
+    delete process.env.GITHUB_TOKEN;
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com": { oauth_token: 12345 } })
+    );
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com": { oauth_token: true } })
+    );
+    mockExecFile.mockImplementation((file, args, callback: any) => {
+      callback(null, { stdout: "gho_typed_fallback\n", stderr: "" });
+      return {} as any;
+    });
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_typed_fallback");
+  });
+
   it("only matches exact github.com host, not substrings", async () => {
     delete process.env.GITHUB_TOKEN;
     mockReadFile.mockResolvedValueOnce(
@@ -678,20 +719,22 @@ describe("getAuthenticatedHeaders", () => {
     });
   });
 
-  it("never includes raw token values in error messages", async () => {
-    delete process.env.GITHUB_TOKEN;
-    mockReadFile.mockRejectedValue(new Error("ENOENT"));
-    mockExecFile.mockImplementation((file, args, callback: any) => {
-      callback(new Error("gh not found"), { stdout: "", stderr: "" });
-      return {} as any;
-    });
+  it("never includes raw OAuth token in exchange error messages", async () => {
+    process.env.GITHUB_TOKEN = "gho_secret1234567890abcdefghijklmnop";
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+    } as Response);
 
     try {
       await getAuthenticatedHeaders();
+      expect.fail("Should have thrown");
     } catch (err: any) {
-      // Error messages should not leak token values
-      expect(err.message).not.toMatch(/ghp_[a-zA-Z0-9]{30,}/);
-      expect(err.message).not.toMatch(/gho_[a-zA-Z0-9]{30,}/);
+      expect(err.message).not.toContain("gho_secret1234567890abcdefghijklmnop");
+      // Should contain redacted form (first 4 + ... + last 4)
+      expect(err.message).toContain("gho_...mnop");
     }
   });
 });
