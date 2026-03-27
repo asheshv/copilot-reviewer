@@ -51,8 +51,13 @@ sequenceDiagram
 /** Buffered — returns complete result (used by MCP, JSON output) */
 review(options: ReviewOptions): Promise<ReviewResult>
 
-/** Streaming — yields chunks (used by CLI with text/markdown) */
-reviewStream(options: ReviewOptions): AsyncIterable<string>
+/** Streaming — returns tuple with stream + metadata (used by CLI with text/markdown) */
+reviewStream(options: ReviewOptions): Promise<{
+  stream: AsyncIterable<string>;
+  warnings: string[];
+  diff: DiffResult;
+  model: string;
+}>
 ```
 
 ```typescript
@@ -129,6 +134,23 @@ Insertions: +120, Deletions: -45
 ### 6. Format Output
 
 Pass response through [formatter](./11-formatter.md) with the configured format. Only applies to the buffered path — streaming output is written directly.
+
+## prompt.ts — Prompt Utilities
+
+`prompt.ts` provides two utility functions used by the pipeline. It is NOT responsible for the 4-layer prompt merge — that's [config.ts](./06-configuration.md)'s job.
+
+```typescript
+/** Load the built-in default review prompt from prompts/default-review.md */
+loadBuiltInPrompt(): string
+
+/** Format the user message with diff summary and content */
+assembleUserMessage(diff: DiffResult): string
+```
+
+**Division of responsibility:**
+- **config.ts** produces `ResolvedConfig.prompt` (the system prompt) by merging 4 layers. It calls `prompt.loadBuiltInPrompt()` for Layer 1.
+- **prompt.ts** provides `loadBuiltInPrompt()` (disk I/O) and `assembleUserMessage()` (formatting).
+- **review.ts** calls `config.prompt` for the system message and `prompt.assembleUserMessage(diff)` for the user message.
 
 ## `ignorePaths` Application
 

@@ -28,6 +28,11 @@ Models with ID starting with `o1`:
 ## Public Interface
 
 ```typescript
+/** Abstraction over auth.ts — enables testing with mock auth */
+interface AuthProvider {
+  getAuthenticatedHeaders(): Promise<Record<string, string>>;
+}
+
 class CopilotClient {
   constructor(auth: AuthProvider);
 
@@ -36,6 +41,13 @@ class CopilotClient {
 
   /** Streaming — yields chunks as they arrive */
   chatStream(request: ChatRequest): AsyncIterable<StreamChunk>;
+}
+
+interface Message {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: ToolCall[];   // future: tool calling loop
+  tool_call_id?: string;     // future: tool result messages
 }
 
 interface ChatRequest {
