@@ -190,7 +190,7 @@ describe("exchangeSessionToken", () => {
       "https://api.github.com/copilot_internal/v2/token",
       {
         headers: {
-          Authorization: "token gho_oauth1234567890",
+          Authorization: "Token gho_oauth1234567890",
           Accept: "application/json",
         },
       }

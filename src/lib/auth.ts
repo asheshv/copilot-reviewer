@@ -90,7 +90,7 @@ export async function resolveToken(): Promise<string> {
   // All sources failed
   throw new AuthError(
     "no_token",
-    "No GitHub token found. Set $GITHUB_TOKEN, configure GitHub Copilot, or run 'gh auth login'.",
+    "No GitHub token found. Either set $GITHUB_TOKEN, run `gh auth login`, or sign in to Copilot in your editor.",
     false
   );
 }
@@ -121,7 +121,7 @@ export async function exchangeSessionToken(oauthToken: string): Promise<SessionT
     try {
       const response = await fetch("https://api.github.com/copilot_internal/v2/token", {
         headers: {
-          Authorization: `token ${oauthToken}`,
+          Authorization: `Token ${oauthToken}`,
           Accept: "application/json",
         },
       });
