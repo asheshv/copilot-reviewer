@@ -157,6 +157,7 @@ describe("EXIT_CODES", () => {
       AUTH_ERROR: 2,
       DIFF_ERROR: 3,
       API_ERROR: 4,
+      MODEL_ERROR: 4,
       CONFIG_ERROR: 5,
     });
   });

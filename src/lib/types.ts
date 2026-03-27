@@ -227,6 +227,15 @@ export interface FileChange {
 }
 
 // ============================================================================
+// Output Types
+// ============================================================================
+
+/**
+ * Output format for review results.
+ */
+export type OutputFormat = "text" | "markdown" | "json";
+
+// ============================================================================
 // Config Types
 // ============================================================================
 
@@ -235,7 +244,7 @@ export interface FileChange {
  */
 export interface ConfigFile {
   model?: string;
-  format?: "text" | "markdown" | "json";
+  format?: OutputFormat;
   stream?: boolean;
   mode?: "extend" | "replace";
   prompt?: string;
@@ -248,7 +257,7 @@ export interface ConfigFile {
  */
 export interface ResolvedConfig {
   model: string;
-  format: "text" | "markdown" | "json";
+  format: OutputFormat;
   stream: boolean;
   prompt: string;
   defaultBase: string;
@@ -261,7 +270,7 @@ export interface ResolvedConfig {
 export interface CLIOverrides {
   prompt?: string;
   model?: string;
-  format?: "text" | "markdown" | "json";
+  format?: OutputFormat;
   stream?: boolean;
   config?: string;
 }
@@ -301,15 +310,6 @@ export interface ReviewStreamResult {
 }
 
 // ============================================================================
-// Output Types
-// ============================================================================
-
-/**
- * Output format for review results.
- */
-export type OutputFormat = "text" | "markdown" | "json";
-
-// ============================================================================
 // Constants
 // ============================================================================
 
@@ -322,5 +322,6 @@ export const EXIT_CODES = {
   AUTH_ERROR: 2,
   DIFF_ERROR: 3,
   API_ERROR: 4,
+  MODEL_ERROR: 4,
   CONFIG_ERROR: 5,
 } as const;

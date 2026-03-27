@@ -38,10 +38,12 @@ afterEach(() => {
 });
 
 describe("resolveToken", () => {
-  it("returns $GITHUB_TOKEN when set", async () => {
+  it("returns $GITHUB_TOKEN when set and skips other sources", async () => {
     process.env.GITHUB_TOKEN = "ghp_test1234567890abcdefghij";
     const token = await resolveToken();
     expect(token).toBe("ghp_test1234567890abcdefghij");
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 
   it("falls through to Copilot config when env var missing", async () => {
@@ -63,7 +65,7 @@ describe("resolveToken", () => {
     );
   });
 
-  it("parses hosts.json for github.com oauth_token", async () => {
+  it("parses hosts.json for github.com oauth_token and skips gh CLI", async () => {
     delete process.env.GITHUB_TOKEN;
     const homeDir = os.homedir();
 
@@ -79,6 +81,7 @@ describe("resolveToken", () => {
       `${homeDir}/.config/github-copilot/hosts.json`,
       "utf-8"
     );
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 
   it("parses apps.json for github.com oauth_token", async () => {
@@ -206,6 +209,38 @@ describe("resolveToken", () => {
     expect(token).toBe("gho_ghcli_only");
   });
 
+  it("falls through when config entry value is not an object", async () => {
+    delete process.env.GITHUB_TOKEN;
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com": "just_a_string" })
+    );
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com": null })
+    );
+    mockExecFile.mockImplementation((file, args, callback: any) => {
+      callback(null, { stdout: "gho_nonobj_fallback\n", stderr: "" });
+      return {} as any;
+    });
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_nonobj_fallback");
+  });
+
+  it("only matches exact github.com host, not substrings", async () => {
+    delete process.env.GITHUB_TOKEN;
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "not-github.com": { oauth_token: "should_ignore" } })
+    );
+    mockReadFile.mockRejectedValueOnce(new Error("ENOENT"));
+    mockExecFile.mockImplementation((file, args, callback: any) => {
+      callback(null, { stdout: "gho_exact_match\n", stderr: "" });
+      return {} as any;
+    });
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_exact_match");
+  });
+
   it("throws no_token when gh CLI returns empty stdout", async () => {
     delete process.env.GITHUB_TOKEN;
     mockReadFile.mockRejectedValue(new Error("ENOENT"));
@@ -239,7 +274,7 @@ describe("resolveToken", () => {
 describe("exchangeSessionToken", () => {
   beforeEach(() => {
     // Reset fetch mock
-    global.fetch = vi.fn();
+    vi.stubGlobal("fetch", vi.fn());
   });
 
   it("exchanges OAuth token for session token via /copilot_internal/v2/token", async () => {
@@ -462,6 +497,32 @@ describe("exchangeSessionToken", () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
 
+  it("handles non-Error thrown by fetch", async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockRejectedValueOnce("string error");
+
+    const err = await exchangeSessionToken("gho_nonError_test1234").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AuthError);
+    expect((err as AuthError).message).toContain("string error");
+    expect((err as AuthError).cause).toBeUndefined();
+  });
+
+  it.each([
+    { value: NaN, label: "NaN" },
+    { value: Infinity, label: "Infinity" },
+    { value: -Infinity, label: "-Infinity" },
+  ])("rejects non-finite expires_at: $label", async ({ value }) => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ token: "valid_token", expires_at: value }),
+    } as Response);
+
+    await expect(exchangeSessionToken("gho_finite_test1234")).rejects.toMatchObject({
+      code: "exchange_failed",
+    });
+  });
+
   it("redacts short tokens to **** in error messages", async () => {
     const mockFetch = vi.mocked(global.fetch);
     mockFetch.mockResolvedValueOnce({
@@ -595,7 +656,7 @@ describe("exchangeSessionToken", () => {
 
 describe("getAuthenticatedHeaders", () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
+    vi.stubGlobal("fetch", vi.fn());
   });
 
   it("returns headers with Bearer session_token", async () => {
@@ -637,7 +698,7 @@ describe("getAuthenticatedHeaders", () => {
 
 describe("createDefaultAuthProvider", () => {
   beforeEach(() => {
-    global.fetch = vi.fn();
+    vi.stubGlobal("fetch", vi.fn());
   });
 
   it("returns AuthProvider interface implementation", () => {

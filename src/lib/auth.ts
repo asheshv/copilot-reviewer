@@ -68,7 +68,7 @@ export async function resolveToken(): Promise<string> {
 
       // Look for github.com entry with oauth_token
       for (const [host, data] of Object.entries(config)) {
-        if (host.includes("github.com") && typeof data === "object" && data !== null) {
+        if ((host === "github.com" || host.startsWith("github.com:")) && typeof data === "object" && data !== null) {
           const oauth_token = (data as any).oauth_token;
           if (typeof oauth_token === "string" && oauth_token.length > 0) {
             return oauth_token;
@@ -183,6 +183,7 @@ export async function exchangeSessionToken(oauthToken: string): Promise<SessionT
         typeof data.token !== "string" ||
         data.token.length === 0 ||
         typeof data.expires_at !== "number" ||
+        !Number.isFinite(data.expires_at) ||
         data.expires_at <= 0
       ) {
         throw new AuthError(
@@ -192,8 +193,8 @@ export async function exchangeSessionToken(oauthToken: string): Promise<SessionT
         );
       }
 
-      // Reject already-expired tokens (server clock skew)
-      if (data.expires_at <= now) {
+      // Reject already-expired tokens (server clock skew) — use fresh timestamp
+      if (data.expires_at <= Math.floor(Date.now() / 1000)) {
         throw new AuthError(
           "exchange_failed",
           `Token exchange returned already-expired token (token: ${redactToken(oauthToken)})`,
