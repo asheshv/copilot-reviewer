@@ -86,6 +86,92 @@ data: [DONE]
     expect(chunks[1]).toEqual({ test: 2 });
   });
 
+  it("parses reasoning stream from fixture end-to-end", async () => {
+    const fixturePath = join(__dirname, "../fixtures/responses/chat-completions-reasoning.txt");
+    const stream = fixtureToStream(fixturePath);
+    const chunks: object[] = [];
+    for await (const chunk of parseSSEStream(stream)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(3);
+    const parsed = chunks.map((c) => parseChatCompletionChunk(c));
+    expect(parsed[0]).toEqual({ type: "reasoning", text: "Let me think..." });
+    expect(parsed[1]).toEqual({ type: "content", text: "The answer is 42." });
+    expect(parsed[2]?.type).toBe("done");
+  });
+
+  it("parses Responses API stream from fixture end-to-end", async () => {
+    const fixturePath = join(__dirname, "../fixtures/responses/responses-api-streaming.txt");
+    const stream = fixtureToStream(fixturePath);
+    const chunks: object[] = [];
+    for await (const chunk of parseSSEStream(stream)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(3);
+    const parsed = chunks.map((c) => parseResponsesChunk(c));
+    expect(parsed[0]).toEqual({ type: "content", text: "Hello" });
+    expect(parsed[1]).toEqual({ type: "content", text: " world" });
+    expect(parsed[2]?.type).toBe("done");
+  });
+
+  it("parses Responses API delta-object fixture end-to-end", async () => {
+    const fixturePath = join(__dirname, "../fixtures/responses/responses-api-delta-object.txt");
+    const stream = fixtureToStream(fixturePath);
+    const chunks: object[] = [];
+    for await (const chunk of parseSSEStream(stream)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(2);
+    const parsed = chunks.map((c) => parseResponsesChunk(c));
+    expect(parsed[0]).toEqual({ type: "content", text: "Hello object" });
+    expect(parsed[1]?.type).toBe("done");
+  });
+
+  it("parses abnormal finish reasons from fixture", async () => {
+    const fixturePath = join(__dirname, "../fixtures/responses/chat-completions-abnormal.txt");
+    const stream = fixtureToStream(fixturePath);
+    const chunks: object[] = [];
+    for await (const chunk of parseSSEStream(stream)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(2);
+    const parsed = chunks.map((c) => parseChatCompletionChunk(c));
+    expect(parsed[0]).toEqual({ type: "content", text: "partial" });
+    expect(parsed[1]).toEqual({ type: "error", text: "content_filter" });
+  });
+
+  it("handles \\r\\n line endings", async () => {
+    const text = "data: {\"test\":1}\r\ndata: {\"test\":2}\r\ndata: [DONE]\r\n";
+    const readable = Readable.from([new TextEncoder().encode(text)]);
+    const stream = Readable.toWeb(readable) as ReadableStream;
+    const chunks: object[] = [];
+    for await (const chunk of parseSSEStream(stream)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(2);
+  });
+
+  it("handles empty stream", async () => {
+    const readable = Readable.from([new TextEncoder().encode("")]);
+    const stream = Readable.toWeb(readable) as ReadableStream;
+    const chunks: object[] = [];
+    for await (const chunk of parseSSEStream(stream)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(0);
+  });
+
+  it("handles stream with only [DONE]", async () => {
+    const text = "data: [DONE]\n";
+    const readable = Readable.from([new TextEncoder().encode(text)]);
+    const stream = Readable.toWeb(readable) as ReadableStream;
+    const chunks: object[] = [];
+    for await (const chunk of parseSSEStream(stream)) {
+      chunks.push(chunk);
+    }
+    expect(chunks).toHaveLength(0);
+  });
+
   it("skips malformed JSON lines gracefully", async () => {
     const text = `data: {"valid":1}
 data: {malformed json
@@ -196,6 +282,24 @@ describe("parseChatCompletionChunk", () => {
     expect(result).toBeNull();
   });
 
+  it("handles empty string delta.content (valid, not falsy)", () => {
+    const chunk = {
+      choices: [{ delta: { content: "" }, finish_reason: null }],
+    };
+    const result = parseChatCompletionChunk(chunk);
+    expect(result).toEqual({ type: "content", text: "" });
+  });
+
+  it("returns null when choices array is empty", () => {
+    const result = parseChatCompletionChunk({ choices: [] });
+    expect(result).toBeNull();
+  });
+
+  it("returns null when choices is missing", () => {
+    const result = parseChatCompletionChunk({});
+    expect(result).toBeNull();
+  });
+
   it("returns null for chunks with no actionable data", () => {
     const chunk = {
       choices: [{ delta: {} }],
@@ -283,6 +387,18 @@ describe("parseResponsesChunk", () => {
       type: "error",
       text: "Something went wrong",
     });
+  });
+
+  it("handles empty string delta (valid, not falsy)", () => {
+    const chunk = { type: "response.output_text.delta", delta: "" };
+    const result = parseResponsesChunk(chunk);
+    expect(result).toEqual({ type: "content", text: "" });
+  });
+
+  it("handles empty string in delta.text object (valid, not falsy)", () => {
+    const chunk = { type: "response.output_text.delta", delta: { text: "" } };
+    const result = parseResponsesChunk(chunk);
+    expect(result).toEqual({ type: "content", text: "" });
   });
 
   it("returns null for chunks with no actionable data", () => {

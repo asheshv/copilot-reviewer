@@ -10,10 +10,13 @@ import type { StreamChunk } from "./types.js";
  * @param body - ReadableStream containing SSE data
  * @yields Parsed JSON objects from SSE data lines
  */
+const MAX_LINE_BUFFER = 1024 * 1024; // 1MB max buffer to prevent DoS
+
 export async function* parseSSEStream(
   body: ReadableStream
 ): AsyncIterable<object> {
   const reader = body.getReader();
+  // Create decoder once for the entire stream (not per chunk) for performance
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -28,8 +31,13 @@ export async function* parseSSEStream(
       // Append new data to buffer
       buffer += decoder.decode(value, { stream: true });
 
-      // Process complete lines
-      const lines = buffer.split("\n");
+      // Guard against unbounded buffer growth (malicious/malformed stream)
+      if (buffer.length > MAX_LINE_BUFFER) {
+        break;
+      }
+
+      // Process complete lines (handle both \n and \r\n)
+      const lines = buffer.split(/\r?\n/);
       // Keep the last incomplete line in the buffer
       buffer = lines.pop() || "";
 
@@ -90,8 +98,8 @@ export function parseChatCompletionChunk(chunk: any): StreamChunk | null {
     return null;
   }
 
-  // Extract delta content
-  if (choice.delta?.content) {
+  // Extract delta content (explicit null check — empty string is valid)
+  if (choice.delta?.content != null) {
     return {
       type: "content",
       text: choice.delta.content,
@@ -99,14 +107,14 @@ export function parseChatCompletionChunk(chunk: any): StreamChunk | null {
   }
 
   // Extract reasoning content
-  if (choice.delta?.reasoning) {
+  if (choice.delta?.reasoning != null) {
     return {
       type: "reasoning",
       text: choice.delta.reasoning,
     };
   }
 
-  if (choice.delta?.reasoning_content) {
+  if (choice.delta?.reasoning_content != null) {
     return {
       type: "reasoning",
       text: choice.delta.reasoning_content,
@@ -167,7 +175,7 @@ export function parseResponsesChunk(chunk: any): StreamChunk | null {
       };
     }
 
-    if (delta?.text) {
+    if (delta?.text != null) {
       return {
         type: "content",
         text: delta.text,
