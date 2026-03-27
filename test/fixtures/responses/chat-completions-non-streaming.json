@@ -1,0 +1,16 @@
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "Review findings here.",
+        "reasoning": "I analyzed the code."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "total_tokens": 150
+  },
+  "model": "gpt-4.1"
+}

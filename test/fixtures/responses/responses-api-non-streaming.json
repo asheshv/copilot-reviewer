@@ -1,0 +1,23 @@
+{
+  "response": {
+    "status": "completed",
+    "output": [
+      {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "Review findings here."
+          }
+        ]
+      }
+    ],
+    "usage": {
+      "total_tokens": 150
+    },
+    "model": "gpt-4.1",
+    "reasoning": {
+      "summary": "I analyzed the code."
+    }
+  }
+}
