@@ -1,0 +1,5 @@
+data: {"type":"response.output_text.delta","delta":"Hello"}
+
+data: {"type":"response.output_text.delta","delta":" world"}
+
+data: {"type":"response.completed","response":{"status":"completed","usage":{"total_tokens":150},"model":"gpt-4.1"}}

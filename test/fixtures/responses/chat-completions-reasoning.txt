@@ -1,0 +1,7 @@
+data: {"choices":[{"delta":{"reasoning_content":"Let me think..."},"finish_reason":null}]}
+
+data: {"choices":[{"delta":{"content":"The answer is 42."},"finish_reason":null}]}
+
+data: {"choices":[{"finish_reason":"stop"}],"usage":{"total_tokens":200}}
+
+data: [DONE]
