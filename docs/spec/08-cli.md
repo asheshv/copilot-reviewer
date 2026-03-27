@@ -1,0 +1,110 @@
+# 08 — CLI
+
+[Back to Spec Index](./README.md) | Prev: [07 — Review Orchestration](./07-review-orchestration.md) | Next: [09 — MCP Server](./09-mcp-server.md)
+
+---
+
+## Binary Name
+
+`copilot-review` — registered in `package.json` `bin` field.
+
+## Usage
+
+```
+copilot-review [mode] [options]
+
+Modes (default: local):
+  unstaged              Working tree vs index
+  staged                Index vs HEAD
+  local                 Working tree vs HEAD
+  branch [base]         Current branch vs base (default: main)
+  pr <number>           Pull request diff
+  commits <n>           Last N commits
+  range <ref1>..<ref2>  Arbitrary ref range
+
+Options:
+  --model <id>       Model to use (default: auto)
+  --format <fmt>     text | markdown | json (default: markdown)
+  --stream           Force streaming output
+  --no-stream        Force buffered output
+  --prompt <text>    Override review prompt
+  --config <path>    Override config file path
+  --help             Show help
+  --version          Show version
+
+Subcommands:
+  copilot-review models          List available models
+  copilot-review chat "<msg>"    Free-form Copilot chat
+```
+
+## Exit Codes
+
+| Code | Meaning | Use case |
+|------|---------|----------|
+| 0 | Success — no HIGH severity issues | Normal completion |
+| 1 | Review completed with HIGH severity findings | CI gating: `copilot-review branch main \|\| exit 1` |
+| 2 | Auth failure | See [02 — Authentication](./02-authentication.md) |
+| 3 | Diff error (empty, not a git repo, etc.) | See [03 — Diff Collection](./03-diff-collection.md) |
+| 4 | API/model error (rate limit, server error) | See [10 — Error Handling](./10-error-handling.md) |
+| 5 | Config error (malformed config file) | See [06 — Configuration](./06-configuration.md) |
+
+Exit code 1 enables CI integration without extra scripting.
+
+## Output Behavior
+
+### stdout vs stderr
+
+| Channel | Content |
+|---------|---------|
+| **stdout** | Review content only (all formats) |
+| **stderr** | Progress messages, warnings, errors |
+
+This separation enables clean piping: `copilot-review branch main > review.md`.
+
+### Progress Messages (stderr)
+
+```
+Authenticating... done
+Collecting diff (5 files, +120/-45)...
+Requesting review from gpt-4.1...
+```
+
+### Streaming (text/markdown)
+
+Progress on stderr, review content streamed to stdout as it arrives from Copilot.
+
+### Buffered (json)
+
+Progress on stderr, single JSON object on stdout when complete.
+
+## TTY Detection
+
+When stdout is not a TTY (piped):
+- Suppress color
+- Default format switches to `json`
+
+Explicit `--format` always overrides TTY detection.
+
+## Streaming Defaults
+
+| Format | Default streaming | Rationale |
+|--------|-------------------|-----------|
+| markdown | stream | Human watching — show results as they arrive |
+| text | stream | Same |
+| json | buffered | Machine consuming — needs complete object |
+
+`--stream` / `--no-stream` flags always override.
+
+## Subcommands
+
+### `copilot-review models`
+
+Lists available models. See [05 — Model Management](./05-model-management.md).
+
+### `copilot-review chat "<message>"`
+
+Free-form chat with Copilot. Not a review — just a question/answer. Useful for asking Copilot about code patterns, explaining functions, etc. Uses the same auth and client infrastructure.
+
+## Argument Parser
+
+`commander` or `yargs` — decision deferred to implementation time. Both are mature and capable. Key requirement: subcommand support + positional arguments for modes.
