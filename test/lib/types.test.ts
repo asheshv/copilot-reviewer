@@ -48,10 +48,11 @@ describe("ClientError", () => {
 });
 
 describe("ConfigError", () => {
-  it("supports filePath field", () => {
-    const err = new ConfigError("malformed_json", "Bad JSON");
-    err.filePath = "~/.copilot-review/config.json";
+  it("requires filePath in constructor", () => {
+    const err = new ConfigError("malformed_json", "Bad JSON", "~/.copilot-review/config.json");
     expect(err.filePath).toBe("~/.copilot-review/config.json");
+    expect(err.code).toBe("malformed_json");
+    expect(err.recoverable).toBe(false);
   });
 });
 

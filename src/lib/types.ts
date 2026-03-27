@@ -57,10 +57,11 @@ export class ClientError extends CopilotReviewError {
  * Configuration file errors (e.g., malformed JSON, invalid values).
  */
 export class ConfigError extends CopilotReviewError {
-  filePath?: string;
+  filePath: string;
 
-  constructor(code: string, message: string, recoverable = false, cause?: Error) {
+  constructor(code: string, message: string, filePath: string, recoverable = false, cause?: Error) {
     super(code, message, recoverable, cause);
+    this.filePath = filePath;
     this.name = "ConfigError";
   }
 }
