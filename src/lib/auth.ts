@@ -14,7 +14,10 @@ interface SessionToken {
 }
 
 let cachedSession: SessionToken | null = null;
+let cachedOAuthToken: string | null = null;
 let refreshPromise: Promise<SessionToken> | null = null;
+
+const EXPIRY_BUFFER_SECONDS = 60;
 
 /**
  * Clears the cached session token and refresh promise.
@@ -23,6 +26,7 @@ let refreshPromise: Promise<SessionToken> | null = null;
  */
 export function clearSessionCache(): void {
   cachedSession = null;
+  cachedOAuthToken = null;
   refreshPromise = null;
 }
 
@@ -30,7 +34,7 @@ export function clearSessionCache(): void {
  * Redacts a token for safe logging: shows first 4 and last 4 chars, hides the rest.
  */
 function redactToken(token: string): string {
-  if (token.length <= 8) return "****";
+  if (token.length <= 16) return "****";
   return `${token.slice(0, 4)}...${token.slice(-4)}`;
 }
 
@@ -45,8 +49,9 @@ function redactToken(token: string): string {
  */
 export async function resolveToken(): Promise<string> {
   // Source 1: Environment variable
-  if (process.env.GITHUB_TOKEN) {
-    return process.env.GITHUB_TOKEN;
+  const envToken = process.env.GITHUB_TOKEN?.trim();
+  if (envToken) {
+    return envToken;
   }
 
   // Source 2: Copilot config files
@@ -106,8 +111,12 @@ export async function resolveToken(): Promise<string> {
 export async function exchangeSessionToken(oauthToken: string): Promise<SessionToken> {
   const now = Math.floor(Date.now() / 1000);
 
-  // Return cached token if valid
-  if (cachedSession && cachedSession.expires_at > now) {
+  // Return cached token if valid and for the same OAuth identity
+  if (
+    cachedSession &&
+    cachedOAuthToken === oauthToken &&
+    cachedSession.expires_at > now + EXPIRY_BUFFER_SECONDS
+  ) {
     return cachedSession;
   }
 
@@ -157,9 +166,20 @@ export async function exchangeSessionToken(oauthToken: string): Promise<SessionT
       }
 
       // Validate response schema before caching
+      if (
+        !rawData ||
+        typeof rawData !== "object" ||
+        Array.isArray(rawData)
+      ) {
+        throw new AuthError(
+          "exchange_failed",
+          `Invalid token exchange response schema (token: ${redactToken(oauthToken)})`,
+          false
+        );
+      }
+
       const data = rawData as Record<string, unknown>;
       if (
-        !data ||
         typeof data.token !== "string" ||
         data.token.length === 0 ||
         typeof data.expires_at !== "number" ||
@@ -172,15 +192,26 @@ export async function exchangeSessionToken(oauthToken: string): Promise<SessionT
         );
       }
 
+      // Reject already-expired tokens (server clock skew)
+      if (data.expires_at <= now) {
+        throw new AuthError(
+          "exchange_failed",
+          `Token exchange returned already-expired token (token: ${redactToken(oauthToken)})`,
+          false
+        );
+      }
+
       cachedSession = {
         token: data.token as string,
         expires_at: data.expires_at as number,
       };
+      cachedOAuthToken = oauthToken;
 
       return cachedSession;
     } catch (err) {
       // Clear stale cache on any error
       cachedSession = null;
+      cachedOAuthToken = null;
       throw err;
     } finally {
       // Clear the mutex promise

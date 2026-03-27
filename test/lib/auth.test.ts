@@ -163,6 +163,62 @@ describe("resolveToken", () => {
     expect(mockReadFile).toHaveBeenCalledTimes(2);
   });
 
+  it("trims whitespace-only GITHUB_TOKEN and falls through", async () => {
+    process.env.GITHUB_TOKEN = "   \n  ";
+
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com": { oauth_token: "gho_after_whitespace" } })
+    );
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_after_whitespace");
+  });
+
+  it("falls through when config has github.com but no oauth_token", async () => {
+    delete process.env.GITHUB_TOKEN;
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com": { user: "test" } }) // no oauth_token
+    );
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "github.com": { oauth_token: "" } }) // empty oauth_token
+    );
+    mockExecFile.mockImplementation((file, args, callback: any) => {
+      callback(null, { stdout: "gho_fallback_oauth\n", stderr: "" });
+      return {} as any;
+    });
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_fallback_oauth");
+  });
+
+  it("falls through when config has no github.com entry", async () => {
+    delete process.env.GITHUB_TOKEN;
+    mockReadFile.mockResolvedValueOnce(
+      JSON.stringify({ "gitlab.com": { oauth_token: "should_ignore" } })
+    );
+    mockReadFile.mockRejectedValueOnce(new Error("ENOENT"));
+    mockExecFile.mockImplementation((file, args, callback: any) => {
+      callback(null, { stdout: "gho_ghcli_only\n", stderr: "" });
+      return {} as any;
+    });
+
+    const token = await resolveToken();
+    expect(token).toBe("gho_ghcli_only");
+  });
+
+  it("throws no_token when gh CLI returns empty stdout", async () => {
+    delete process.env.GITHUB_TOKEN;
+    mockReadFile.mockRejectedValue(new Error("ENOENT"));
+    mockExecFile.mockImplementation((file, args, callback: any) => {
+      callback(null, { stdout: "  \n", stderr: "" }); // whitespace only
+      return {} as any;
+    });
+
+    await expect(resolveToken()).rejects.toMatchObject({
+      code: "no_token",
+    });
+  });
+
   it("expands ~ via os.homedir() for config paths", async () => {
     delete process.env.GITHUB_TOKEN;
     const homeDir = os.homedir();
@@ -251,21 +307,21 @@ describe("exchangeSessionToken", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("re-fetches when token is expired", async () => {
+  it("re-fetches when token is within expiry buffer", async () => {
     const mockFetch = vi.mocked(global.fetch);
 
-    // First call with expired token
+    // First call: token valid but within 60s buffer
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
-        token: "sess_expired",
-        expires_at: Math.floor(Date.now() / 1000) - 100, // Already expired
+        token: "sess_near_expiry",
+        expires_at: Math.floor(Date.now() / 1000) + 10, // Within 60s buffer
       }),
     } as Response);
 
     await exchangeSessionToken("gho_test");
 
-    // Second call should fetch new token
+    // Second call: cache check fails (within buffer), should re-fetch
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -353,17 +409,17 @@ describe("exchangeSessionToken", () => {
   it("clears stale cache on exchange error", async () => {
     const mockFetch = vi.mocked(global.fetch);
 
-    // First: successful exchange
+    // First: successful exchange with token within buffer
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         token: "sess_will_expire",
-        expires_at: Math.floor(Date.now() / 1000) - 1, // Already expired
+        expires_at: Math.floor(Date.now() / 1000) + 10, // Within buffer
       }),
     } as Response);
     await exchangeSessionToken("gho_test1234567890");
 
-    // Second: exchange fails (HTTP error)
+    // Second: exchange fails (HTTP error) — triggered because token is within buffer
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 500,
@@ -388,6 +444,99 @@ describe("exchangeSessionToken", () => {
     const result = await exchangeSessionToken("gho_test1234567890");
     expect(result.token).toBe("sess_fresh");
     expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("redacts short tokens to **** in error messages", async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+    } as Response);
+
+    try {
+      await exchangeSessionToken("short_tok");
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err.message).not.toContain("short_tok");
+      expect(err.message).toContain("****");
+    }
+  });
+
+  it("throws AuthError when response body is not valid JSON", async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => { throw new SyntaxError("Unexpected token"); },
+    } as unknown as Response);
+
+    try {
+      await exchangeSessionToken("gho_json_parse_test1");
+      expect.fail("Should have thrown");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(AuthError);
+      expect(err.code).toBe("exchange_failed");
+      expect(err.message).toContain("Invalid JSON response");
+      expect(err.cause).toBeInstanceOf(SyntaxError);
+    }
+  });
+
+  it.each([
+    { token: "", expires_at: 9999999999, label: "empty token" },
+    { token: "valid", expires_at: 0, label: "zero expires_at" },
+    { token: "valid", expires_at: -1, label: "negative expires_at" },
+  ])("rejects invalid schema: $label", async ({ token, expires_at }) => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ token, expires_at }),
+    } as Response);
+
+    await expect(exchangeSessionToken("gho_boundary_test1234")).rejects.toMatchObject({
+      code: "exchange_failed",
+    });
+  });
+
+  it("rejects already-expired token from API", async () => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        token: "sess_past",
+        expires_at: Math.floor(Date.now() / 1000) - 100,
+      }),
+    } as Response);
+
+    await expect(exchangeSessionToken("gho_expired_test1234")).rejects.toMatchObject({
+      code: "exchange_failed",
+    });
+  });
+
+  it("invalidates cache when OAuth token changes", async () => {
+    const mockFetch = vi.mocked(global.fetch);
+
+    // First call with token A
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        token: "sess_user_a",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    } as Response);
+    const resultA = await exchangeSessionToken("gho_user_a_1234567890");
+    expect(resultA.token).toBe("sess_user_a");
+
+    // Second call with different token B — should NOT use cache
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        token: "sess_user_b",
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    } as Response);
+    const resultB = await exchangeSessionToken("gho_user_b_1234567890");
+    expect(resultB.token).toBe("sess_user_b");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it("throws AuthError exchange_failed on HTTP error", async () => {
