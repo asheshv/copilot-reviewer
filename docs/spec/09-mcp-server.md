@@ -88,7 +88,10 @@ Chat with GitHub Copilot about code.
 
 The optional `context` parameter lets agents pass in file contents or code snippets alongside a question without constructing the full prompt themselves.
 
-Implementation: calls `client.chat()` directly with `message` as the user message and `context` prepended as a system/user context block.
+**Implementation:** Calls `client.chat()` directly:
+- `systemPrompt`: the `context` parameter if provided, otherwise empty string. The review prompt is NOT used for chat.
+- `messages`: `[{ role: "user", content: message }]`
+- `model`: resolved via auto-selection or explicit override
 
 ---
 

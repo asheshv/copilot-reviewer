@@ -46,6 +46,8 @@ Locations:
 
 Look for keys containing `github.com` with an `oauth_token` field. These files are created by Copilot editor extensions (VS Code, Neovim, JetBrains).
 
+> `~` paths must be expanded via `os.homedir()` in Node.js (not shell expansion). This applies on all platforms including Windows.
+
 ### Source 3: `gh` CLI
 
 ```bash

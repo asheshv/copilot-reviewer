@@ -87,6 +87,24 @@ The JSON format intentionally differs from the internal `ReviewResult` type:
 
 The `exitCode` field lets machine consumers get the severity signal without parsing the CLI's exit code.
 
+### NDJSON Streaming Format
+
+When `--stream --format json` is used (see [08 — CLI](./08-cli.md)), output is newline-delimited JSON (one `StreamChunk` per line):
+
+```
+{"type":"content","text":"## Findings\n"}
+{"type":"content","text":"### HIGH SQL injection in query builder\n"}
+{"type":"content","text":"**File:** `src/db.ts` **Line:** 42\n..."}
+{"type":"done","usage":{"totalTokens":1234},"model":"gpt-4.1"}
+```
+
+Each line is a serialized `StreamChunk` object. Warnings are emitted as special chunks before content:
+
+```
+{"type":"warning","text":"Token budget at 85% of model limit"}
+{"type":"content","text":"..."}
+```
+
 ## Warnings
 
 Warnings (token budget exceeded, binary files skipped, etc.) appear in all formats:
@@ -99,4 +117,4 @@ Warnings (token budget exceeded, binary files skipped, etc.) appear in all forma
 
 ## Design Principle
 
-The formatter is deliberately thin. Copilot's response is the product — the formatter just frames it. No interpretation, no restructuring, no severity extraction (that's a [future enhancement](./14-future.md)).
+The formatter is deliberately thin. Copilot's response is the product — the formatter just frames it. Severity detection is limited to a simple regex scan (`### HIGH` or `[HIGH]` patterns) for determining `exitCode` — this is pattern matching on the output format we control via the prompt, not semantic parsing. Full structured extraction of findings (file, line, category, suggestion objects) is a [future enhancement](./14-future.md).

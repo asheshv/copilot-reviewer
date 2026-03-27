@@ -37,10 +37,18 @@ This prompt is Layer 1 in the [configuration hierarchy](./06-configuration.md). 
 
 ## Output Format
 
-Each finding follows a structured template:
+Each finding uses ONE severity level as the header prefix. Examples:
 
 ```markdown
-### [HIGH|MEDIUM|LOW] <title>
+### HIGH SQL injection in query builder
+### MEDIUM Missing null check on user input
+### LOW Variable name is misleading
+```
+
+Full template per finding:
+
+```markdown
+### HIGH <title>
 **File:** `path/to/file.ts` **Line:** <line or range>
 **Category:** Security | Correctness | Performance | Readability | Simplicity
 

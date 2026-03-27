@@ -79,8 +79,10 @@ Call `collectDiff(options.diff)`. If the diff is empty, return early with a "no 
 
 ### 2. Resolve Model
 
-- If explicit `--model` → validate against `models.listModels()` (see [05 — Model Management](./05-model-management.md))
-- If `"auto"` → call `models.autoSelect()`
+- If explicit `--model` → call `models.validateModel(id)` to verify it exists and get `ModelInfo`
+- If `"auto"` → call `models.autoSelect()` to get model ID, then call `models.validateModel(id)` to get `ModelInfo` (needed for `maxPromptTokens` in step 3)
+
+Both paths produce a `ModelInfo` object with token limits for budget checking.
 
 ### 3. Check Token Budget
 
@@ -100,7 +102,9 @@ No truncation — the user decides how to reduce the diff (filter with `ignorePa
 
 ### 4. Assemble Messages
 
-**System message:** `config.prompt` (assembled by [config.ts](./06-configuration.md)).
+**Message ordering** (per API reference): system prompt → context data → conversation history → current user prompt. For v1 single-turn reviews, this simplifies to system + user. Future multi-turn tool loops must preserve this full ordering.
+
+**System message:** `config.prompt` (assembled by [config.ts](./06-configuration.md)). This is always a single concatenated string — config.ts handles multi-layer assembly. For Chat Completions, it becomes one `role: "system"` message. For Responses API, it goes in the `instructions` field.
 
 **User message:**
 
@@ -132,9 +136,25 @@ Pass response through [formatter](./11-formatter.md) with the configured format.
 
 ## Streaming Warnings
 
-`reviewStream()` returns `AsyncIterable<string>` — it has no return value to carry warnings. Instead:
-- Token budget warnings are emitted to `stderr` by the CLI **before** starting the stream (they're computed in step 3, before step 5).
-- The caller receives warnings via a separate `getWarnings(): string[]` method on the review context, or the function signature changes to return `{ stream: AsyncIterable<string>, warnings: string[] }`.
+`reviewStream()` returns a tuple so callers can access warnings without stderr coupling:
+
+```typescript
+reviewStream(options: ReviewOptions): Promise<{
+  stream: AsyncIterable<string>;
+  warnings: string[];
+  diff: DiffResult;
+  model: string;
+}>
+```
+
+Warnings are computed in steps 1-3 (before the stream starts). The CLI emits them to stderr before streaming content to stdout.
+
+## Empty Response Handling
+
+If Copilot returns an empty `content` string (no findings), this is NOT an error:
+- Exit code: 0 (no HIGH severity findings detected)
+- Formatter outputs normally with empty findings section
+- A note "Copilot returned no findings." is added to `warnings` array
 
 ## Logging
 

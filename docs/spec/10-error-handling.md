@@ -43,7 +43,9 @@ See [02 — Authentication](./02-authentication.md).
 | `pr_not_found` | PR number is invalid | No |
 | `gh_not_installed` | `gh` CLI not found (PR mode) | No |
 | `invalid_ref` | Git ref doesn't exist (range mode) | No |
-| `diff_too_large` | Diff exceeds size limit (10 MB or token budget) | No |
+| `diff_too_large` | Diff exceeds raw size limit (10 MB) | No |
+| `insufficient_history` | Git ref (e.g., HEAD~5) doesn't exist due to shallow clone | No |
+| `no_commits` | Repository has no commits yet | No |
 
 See [03 — Diff Collection](./03-diff-collection.md).
 
@@ -84,6 +86,15 @@ See [06 — Configuration](./06-configuration.md).
 Additional field: `available?: string[]` (valid model IDs).
 
 See [05 — Model Management](./05-model-management.md).
+
+### ParameterError (MCP-specific)
+
+| Code | When | Recoverable |
+|------|------|-------------|
+| `invalid_parameter` | Tool parameter has invalid value (e.g., unknown mode) | No |
+| `missing_parameter` | Required parameter missing for the given mode | No |
+
+These errors are specific to the MCP server's tool parameter validation layer. See [09 — MCP Server](./09-mcp-server.md).
 
 ## ReviewError
 
@@ -150,6 +161,10 @@ Every error message tells the user what went wrong AND what to do about it:
 | `diff_too_large` | "Diff is too large for the selected model (est. 200k tokens, max 128k). Use ignorePaths, a smaller diff mode, or a larger-context model." |
 | `timeout` | "Request to Copilot API timed out after 30 seconds. Check your network connection." |
 | `invalid_response` | "Copilot API returned an unexpected response format. The API may have changed." |
+| `insufficient_history` | "Not enough commit history for `commits 5`. This may be a shallow clone. Fetch more history with `git fetch --unshallow`." |
+| `no_commits` | "No commits in this repository yet. Make an initial commit before reviewing changes." |
+| `invalid_parameter` | "Invalid mode 'xyz'. Valid: unstaged, staged, local, branch, pr, commits, range" |
+| `missing_parameter` | "Mode 'pr' requires 'pr' parameter (PR number)" |
 | `malformed_json` | "Failed to parse config: ~/.copilot-review/config.json — Unexpected token at line 5." |
 
 ## Design Principle

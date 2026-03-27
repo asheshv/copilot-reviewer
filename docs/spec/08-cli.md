@@ -110,6 +110,8 @@ Lists available models. See [05 — Model Management](./05-model-management.md).
 
 Free-form chat with Copilot. **Single-turn only** — send message, print response, exit. Not an interactive chat loop. Uses the same auth and client infrastructure.
 
+**System prompt:** None (empty string). The review prompt is NOT used for chat — it would confuse the model. The user's message is the entire input. If the user needs a system prompt, they can prefix their message with instructions.
+
 For multi-turn conversations, use a full MCP client (which can call the `copilot_chat` tool repeatedly with conversation history).
 
 ## Default Mode

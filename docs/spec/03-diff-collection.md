@@ -66,6 +66,8 @@ Returns both raw diff text (sent to Copilot) and parsed metadata (used by [forma
 | Base branch exists | `branch` mode | `DiffError { code: "base_not_found" }` |
 | PR number valid | `pr` mode | `DiffError { code: "pr_not_found" }` |
 | Refs exist | `range` mode | `DiffError { code: "invalid_ref" }` |
+| Sufficient commit history | `commits` mode | `DiffError { code: "insufficient_history" }` |
+| At least one commit exists | All modes using HEAD | `DiffError { code: "no_commits" }` |
 
 ## Edge Cases
 
@@ -80,6 +82,20 @@ Captured as `status: "renamed"` with both `oldPath` (original) and `path` (new).
 
 ### `ignorePaths` Filtering
 `ignorePaths` is passed via `DiffOptions.ignorePaths` (populated from [config](./06-configuration.md) by `review.ts`). Filtering is applied as post-processing after the git diff runs — matched files are excluded from both `raw` diff and `files` metadata. Applied after git command returns, not via git pathspecs.
+
+### Shallow Clones
+CI environments often use `git clone --depth 1`. The `commits` mode (`HEAD~N`) will fail if N exceeds the available history. Detect this case (git error contains "unknown revision") and return `DiffError { code: "insufficient_history" }` with a message suggesting `git fetch --unshallow`.
+
+The `branch` mode (`<base>...HEAD`) works in shallow clones if the base commit is within the fetched depth; otherwise the same error applies.
+
+### Detached HEAD
+`branch` mode works in detached HEAD state — it compares `<base>...<detached-commit>`. The diff is valid but the mode name is a misnomer. Users in CI (where detached HEAD is common) may prefer `commits` or `range` modes for clarity.
+
+### No Commits Yet
+In a brand new repo with no commits, `git diff HEAD` fails. Detect "unknown revision 'HEAD'" and return `DiffError { code: "no_commits" }`. The `unstaged` and `staged` modes still work (they don't reference HEAD).
+
+### Merge Conflicts in Progress
+During active merge conflicts, `git diff` output includes conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`). These are preserved in `raw` diff and sent to Copilot as-is. Review results may be misleading — resolve conflicts before reviewing for best results.
 
 ### Diff Size Limit
 If `raw` diff exceeds **10 MB** (configurable via `COPILOT_REVIEW_MAX_DIFF_SIZE` env var), fail immediately with `DiffError { code: "diff_too_large" }` before any further processing. Prevents OOM on accidentally committed binaries.

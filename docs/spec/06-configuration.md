@@ -154,7 +154,28 @@ If the value looks like a path but the file doesn't exist → `ConfigError { cod
 ## Public API
 
 ```typescript
+interface CLIOverrides {
+  prompt?: string;              // --prompt flag
+  model?: string;               // --model flag
+  format?: "text" | "markdown" | "json";  // --format flag
+  stream?: boolean;             // --stream / --no-stream flag
+  config?: string;              // --config flag (path to override project config layer)
+}
+
 loadConfig(cliOverrides?: CLIOverrides): ResolvedConfig
 ```
 
 See [10 — Error Handling](./10-error-handling.md) for `ConfigError` types.
+
+## Platform Considerations
+
+### Path Normalization
+
+All file paths are normalized to forward slashes internally (even on Windows) for consistency with git output:
+- `ignorePaths` globs should use forward slashes: `dist/**/*.js` (not `dist\**\*.js`)
+- Prompt file paths in `config.json` can use either format; both are normalized
+- `~` in paths is expanded using `os.homedir()` in Node.js (not shell expansion) — applies to config paths, Copilot config file paths, and `--config` flag
+
+### Monorepo Projects
+
+Project config is loaded from `<git-root>/.copilot-review/`. In monorepos (git root above the project directory), all services share the same project config. For per-service config, use `--config` flag or rely on global config for per-developer overrides.

@@ -85,7 +85,11 @@ Auth headers are provided by [auth.ts](./02-authentication.md) via `getAuthentic
 x-initiator: agent
 ```
 
-Set when the request contains tool call results (last message has `role: "tool"`). Not used in v1 (no tool calling loop), but documented here for future implementation.
+Set when the request contains tool call results. Condition differs by API format:
+- Chat Completions: last message has `role: "tool"`
+- Responses API: last input item has `type: "function_call_output"`
+
+Not used in v1 (no tool calling loop), but documented here for future implementation.
 
 ## HTTP Transport Config
 
@@ -116,6 +120,15 @@ The client should:
 - Honor `retry-after` header (seconds to wait) when present
 
 > Note: Copilot-specific endpoints may have different rate limits than the general GitHub API. Inspect response headers empirically.
+
+### Secondary Rate Limits
+
+GitHub also enforces abuse-prevention limits that can cause **403** responses even when `x-ratelimit-remaining > 0`:
+- Max 100 concurrent requests
+- Max 80 content-generating requests per minute
+- Max 900 points per minute on REST endpoints
+
+If 403 is received with rate limit context, treat as rate-limited and apply exponential backoff with longer delays.
 
 ## SSE Streaming Parser (`streaming.ts`)
 
@@ -162,6 +175,44 @@ parseSSEStream(body: ReadableStream): AsyncIterable<object>
 - Yields parsed JSON objects
 - Skips malformed lines gracefully
 
+## Non-Streaming Response Parsing
+
+### Chat Completions (non-streaming)
+
+```json
+{
+  "choices": [{
+    "message": { "role": "assistant", "content": "...", "reasoning": "..." },
+    "finish_reason": "stop"
+  }],
+  "usage": { "total_tokens": 150 },
+  "model": "gpt-4.1"
+}
+```
+
+- Extract content from `choices[0].message.content`
+- Check both `choices[0].finish_reason` AND `choices[0].done_reason` (different providers use either)
+- Check both `message.reasoning` AND `message.reasoning_content` for reasoning output
+- `usage.total_tokens` may be at top-level or per-choice
+
+### Responses API (non-streaming)
+
+```json
+{
+  "response": {
+    "status": "completed",
+    "output": [{ "role": "assistant", "content": [{ "type": "output_text", "text": "..." }] }],
+    "usage": { "total_tokens": 150 },
+    "model": "gpt-4.1",
+    "reasoning": { "summary": "..." }
+  }
+}
+```
+
+- Check `response.status == "completed"`. If `"failed"` or other → `ClientError { code: "request_failed" }` with `error.message` if available.
+- Extract text from `response.output[].content[]` — filter items where `type` is `"output_text"`, `"text"`, or `"input_text"`.
+- Reasoning summary in `response.reasoning.summary` (if present).
+
 ## Response Validation
 
 All response field accesses must be null-safe (optional chaining). If expected fields are missing (e.g., `choices[0]` doesn't exist in non-streaming response), throw `ClientError { code: "invalid_response" }` with the raw response body for debugging. This protects against API changes to the undocumented endpoints.
@@ -187,3 +238,15 @@ See [10 — Error Handling](./10-error-handling.md) for error types.
 ## No Tool Calling Loop in v1
 
 The review use case is one-shot: send diff + prompt, get response. Copilot can request tool calls (e.g., asking to read additional files), but v1 does not implement the tool calling loop. This is documented as a [future enhancement](./14-future.md).
+
+### Tool Call Streaming (future reference)
+
+When tool calling is implemented, Chat Completions tool calls arrive incrementally:
+- Use `index` field as key to track each tool call
+- `id` and `name` arrive in the first chunk for that index
+- `arguments` is concatenated across multiple chunks for the same index
+- `finish_reason: "tool_calls"` signals all tool calls are complete
+
+Responses API tool calls arrive as complete items via `response.output_item.done` — no incremental accumulation needed.
+
+See [Copilot API Reference](../reference/copilot-api-reference.md) for the full protocol.
