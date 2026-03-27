@@ -14,7 +14,14 @@
 
 - [ ] **Step 1: Create prompts/default-review.md**
 
-The built-in opinionated review prompt per spec 12. Priority order: Security > Correctness > Performance > Readability > Simplicity. Each finding uses `### HIGH <title>` format (one severity per header). Rules: flag security as HIGH, scrutinize every code path, don't invent findings.
+Read [spec 12 — Default Prompt](../spec/12-default-prompt.md) and write the full prompt. Key elements:
+- Role: "You are an expert code reviewer"
+- Priority order: Security > Correctness > Performance > Readability > Simplicity (with detailed bullet points per category from spec 12)
+- Output format per finding: `### HIGH <title>` (one severity per header, NOT `[HIGH|MEDIUM|LOW]`)
+- File/line reference: `**File:** \`path\` **Line:** N`
+- Category label per finding
+- Suggestion with code block
+- Rules: flag security as HIGH even if unlikely, scrutinize every code path, don't invent findings, end with severity summary
 
 - [ ] **Step 2: Create test config fixtures**
 
@@ -126,7 +133,7 @@ Two exports:
 
 1. Start with built-in defaults (calls `loadBuiltInPrompt()` for Layer 1 prompt)
 2. Load global config from `os.homedir() + "/.copilot-review/"` — read `config.json` + `config.md`
-3. Load project config from `<git-root>/.copilot-review/` (find git root via `git rev-parse --show-toplevel`), OR from `cliOverrides.config` path if provided
+3. Load project config: detect git root by spawning `git rev-parse --show-toplevel`. If command fails (exit code != 0) or stdout is empty → skip project layer silently (allows use outside git repos). If `cliOverrides.config` is provided, use that path instead of git root detection.
 4. Apply CLI overrides (Layer 4)
 5. Merge structured settings: last-layer-wins for model/format/stream/defaultBase
 6. Merge `ignorePaths`: union (concat + deduplicate) across all layers

@@ -81,7 +81,18 @@ describe("parseResponsesChunk", () => {
 });
 ```
 
-Helper: create a `ReadableStream` from fixture text files for testing `parseSSEStream`.
+Helper to create `ReadableStream` from fixture text for testing:
+
+```typescript
+import { Readable } from "node:stream";
+import { readFileSync } from "node:fs";
+
+function fixtureToStream(fixturePath: string): ReadableStream {
+  const text = readFileSync(fixturePath, "utf-8");
+  const readable = Readable.from([new TextEncoder().encode(text)]);
+  return Readable.toWeb(readable) as ReadableStream;
+}
+```
 
 - [ ] **Step 3: Run tests to verify they fail**
 

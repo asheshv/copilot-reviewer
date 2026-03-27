@@ -78,28 +78,34 @@ Implementation follows spec 07 pipeline:
 6. format(response, config.format)  // buffered path only
 ```
 
-Needs `CopilotClient`, `ModelManager`, `collectDiff`, `loadConfig`, `assembleUserMessage`, `format` — either passed as dependencies or constructed internally.
+Dependencies are passed as parameters for testability:
 
-**Recommendation:** Use a factory function or constructor that receives the dependencies:
-```typescript
-export function createReviewPipeline(client: CopilotClient, models: ModelManager) {
-  return {
-    review(options: ReviewOptions): Promise<ReviewResult> { ... },
-    reviewStream(options: ReviewOptions): Promise<ReviewStreamResult> { ... },
-  };
-}
-```
-
-Or simpler: standalone functions that accept everything they need:
 ```typescript
 export async function review(
   options: ReviewOptions,
   client: CopilotClient,
   models: ModelManager,
 ): Promise<ReviewResult> { ... }
+
+export async function reviewStream(
+  options: ReviewOptions,
+  client: CopilotClient,
+  models: ModelManager,
+): Promise<ReviewStreamResult> { ... }
 ```
 
-Choose whichever feels cleaner during implementation.
+CLI and MCP server construct `CopilotClient` + `ModelManager` and pass them in. Tests can pass mocks.
+
+### Logging
+
+When `options.config` includes a verbose flag (or `DEBUG=copilot-review` env var is set), log to stderr:
+- Resolved config (tokens redacted)
+- Auth token source and expiry
+- API request URL, method, headers (Authorization redacted)
+- Response status code and rate limit headers
+- Git commands executed
+
+Use a simple `debug(msg: string)` helper that checks the verbose/DEBUG flag and writes to `process.stderr`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 

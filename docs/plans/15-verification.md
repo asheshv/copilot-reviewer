@@ -36,6 +36,8 @@ Expected: JSON-RPC response with server capabilities (3 tools registered).
 
 - [ ] **Step 6: Manual smoke test (optional — requires real GitHub token)**
 
+> If you don't have a GitHub token, skip this step. Unit tests already cover auth logic with mocks. This step only validates end-to-end flow against the real Copilot API.
+
 ```bash
 export GITHUB_TOKEN=<your-token>
 

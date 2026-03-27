@@ -2,7 +2,7 @@
 
 [Back to Plan Index](./README.md) | Prev: [11 — Exports](./11-exports.md) | Next: [13 — MCP Server](./13-mcp-server.md)
 
-**Dependencies:** Task 11 (exports)
+**Dependencies:** Tasks 11 (exports), 13 (mcp-server — CLI dynamically imports it for --mcp flag)
 **Spec ref:** [08 — CLI](../spec/08-cli.md)
 
 **Files:**
@@ -26,6 +26,7 @@ describe("CLI", () => {
     it("parses --prompt flag");
     it("parses --config flag");
     it("parses --verbose flag");
+    it("DEBUG=copilot-review env var enables verbose mode");
   });
 
   describe("exit codes", () => {
@@ -82,13 +83,7 @@ const program = new Command()
   .version(VERSION)
   .description("Review code changes using GitHub Copilot");
 
-// --mcp mode: delegate to MCP server and exit
-if (process.argv.includes("--mcp")) {
-  await import("./mcp-server.js").then(m => m.startServer());
-  // never returns
-}
-
-// Main review command
+// Main review command — register --mcp as hidden option
 program
   .argument("[mode]", "Diff mode", "local")
   .argument("[modeArg]", "Mode argument (base branch, PR number, etc.)")
@@ -97,6 +92,7 @@ program
   .option("--stream", "Force streaming")
   .option("--no-stream", "Force buffered")
   .option("--prompt <text>", "Override review prompt")
+  .option("--mcp", "Start as MCP server (hidden)")  // hidden from --help
   .option("--config <path>", "Override config file path")
   .option("--verbose", "Enable debug logging")
   .action(handleReview);
@@ -106,7 +102,16 @@ program.command("models").description("List available models").action(handleMode
 program.command("chat <message>").description("Chat with Copilot").action(handleChat);
 
 program.parse();
+
+// Check --mcp AFTER parsing (so --help still works)
+const opts = program.opts();
+if (opts.mcp) {
+  await import("./mcp-server.js").then(m => m.startServer());
+  process.exit(0);  // never reached — server runs until killed
+}
 ```
+
+Verbose mode: check both `opts.verbose` and `process.env.DEBUG === "copilot-review"`.
 
 Handler functions:
 - `handleReview()`: load config → create auth/client/models → call `review()` or `reviewStream()` → output to stdout → map errors to exit codes

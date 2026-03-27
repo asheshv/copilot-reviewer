@@ -48,7 +48,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "commander": "^12.0.0"
+    "commander": "^12.0.0",
+    "minimatch": "^10.0.0"
   }
 }
 ```
@@ -60,7 +61,8 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "node16",
+    "isolatedModules": true,
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": "src",
@@ -114,6 +116,8 @@ Expected: `node_modules/` created, `package-lock.json` generated.
 ```typescript
 export const VERSION = "0.1.0";
 ```
+
+> This is a temporary placeholder. Task 11 will replace entire contents with real exports.
 
 Run: `npm run build`
 Expected: `dist/lib/index.js` and `dist/lib/index.d.ts` created.

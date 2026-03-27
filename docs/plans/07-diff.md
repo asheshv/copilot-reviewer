@@ -65,6 +65,10 @@ describe("collectDiff", () => {
     it("respects COPILOT_REVIEW_MAX_DIFF_SIZE env var for size limit");
   });
 
+  describe("merge conflicts", () => {
+    it("preserves conflict markers in raw diff (no special handling)");
+  });
+
   describe("security", () => {
     it("passes user input as array arguments, not interpolated into strings");
   });
@@ -88,7 +92,7 @@ Expected: FAIL.
    - Extract file paths, status (add/modify/delete/rename)
    - Count insertions/deletions per file
    - Detect binary files ("Binary files" line)
-5. Apply `ignorePaths` filter (glob match with `minimatch` or manual pattern matching — prefer no extra dependency, use simple glob matching)
+5. Apply `ignorePaths` filter using `minimatch` (add `minimatch` to dependencies in package.json). Supports `**`, `*`, `?` patterns. Needed for patterns like `vendor/**` and `*.lock`.
 6. Check size limit (`COPILOT_REVIEW_MAX_DIFF_SIZE` env var, default 10 MB)
 7. Detect git error patterns in stderr:
    - "not a git repository" → `not_git_repo`

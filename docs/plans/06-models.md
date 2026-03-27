@@ -55,6 +55,8 @@ Expected: FAIL.
 
 Cache TTL: 300 seconds (5 minutes). Store `Date.now() + 300_000` as expiry.
 
+If the `/models` response includes cost multiplier info, include it in `ModelInfo`. The CLI `models` command should display it if available. Full quota checking (`/copilot_internal/user`) is a future enhancement (spec 14).
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npm test`

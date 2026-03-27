@@ -13,7 +13,24 @@
 
 - [ ] **Step 1: Write failing tests**
 
-Mock `process.env`, `fs/promises` (for Copilot config file reads), and child process spawning (for `gh` CLI). Use `vi.mock()`.
+Mock `process.env`, `fs/promises`, and child process spawning. Setup:
+
+```typescript
+import { vi, describe, it, expect, beforeEach } from "vitest";
+import { readFile } from "fs/promises";
+import { execFile } from "child_process";
+
+vi.mock("fs/promises", () => ({ readFile: vi.fn() }));
+vi.mock("child_process", () => ({ execFile: vi.fn() }));
+
+const mockReadFile = vi.mocked(readFile);
+const mockExecFile = vi.mocked(execFile);
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  delete process.env.GITHUB_TOKEN;
+});
+```
 
 Key test cases:
 

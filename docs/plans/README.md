@@ -27,7 +27,7 @@
 | [09](./09-formatter.md) | Output Formatter | src/lib/formatter.ts | [11-formatter](../spec/11-formatter.md) | Task 2 |
 | [10](./10-review.md) | Review Orchestration | src/lib/review.ts | [07-review-orchestration](../spec/07-review-orchestration.md) | Tasks 5, 6, 7, 8, 9 |
 | [11](./11-exports.md) | Public API Exports | src/lib/index.ts | [01-architecture](../spec/01-architecture.md) | Tasks 2-10 |
-| [12](./12-cli.md) | CLI Entry Point | src/cli.ts | [08-cli](../spec/08-cli.md) | Task 11 |
+| [12](./12-cli.md) | CLI Entry Point | src/cli.ts | [08-cli](../spec/08-cli.md) | Tasks 11, 13 |
 | [13](./13-mcp-server.md) | MCP Server | src/mcp-server.ts | [09-mcp-server](../spec/09-mcp-server.md) | Task 11 |
 | [14](./14-readme.md) | README | README.md | All specs | Tasks 12, 13 |
 | [15](./15-verification.md) | Final Verification | — | — | All tasks |
@@ -50,8 +50,8 @@ graph TD
     T8 --> T10
     T9 --> T10
     T10 --> T11["11 Exports"]
-    T11 --> T12["12 CLI"]
     T11 --> T13["13 MCP Server"]
+    T13 --> T12["12 CLI"]
     T12 --> T14["14 README"]
     T13 --> T14
     T14 --> T15["15 Verification"]
@@ -67,7 +67,7 @@ After Task 2 (types), these can run in parallel:
 
 Task 10 (review) depends on all four tracks converging.
 
-After Task 11 (exports), CLI (12) and MCP (13) can run in parallel.
+After Task 11 (exports): Task 13 (MCP) first, then Task 12 (CLI) — CLI dynamically imports MCP server for `--mcp` flag.
 
 ## File Map
 

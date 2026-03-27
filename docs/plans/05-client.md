@@ -45,7 +45,26 @@
 
 - [ ] **Step 2: Write failing tests**
 
-Use `msw` (Mock Service Worker) for HTTP mocking. Key test cases:
+Use `msw` (Mock Service Worker) for HTTP mocking. Setup:
+
+```typescript
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+
+const server = setupServer();
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+
+// Example handler for tests:
+server.use(
+  http.post("https://api.githubcopilot.com/chat/completions", () =>
+    HttpResponse.json(chatCompletionsFixture)
+  ),
+);
+```
+
+Key test cases:
 
 ```typescript
 describe("CopilotClient", () => {
@@ -82,6 +101,7 @@ describe("CopilotClient", () => {
     it("retries on 429 with retry-after header");
     it("retries on 502/503/504 with exponential backoff");
     it("retries on network timeout");
+    it("retries on 403 with rate limit headers (secondary limits)");
     it("max 2 retries then throws");
     it("does not retry on 401 with authorize_url");
     it("does not retry on other non-2xx");
@@ -111,6 +131,10 @@ Expected: FAIL.
 - Private: `_retry<T>(fn: () => Promise<T>)` — retry wrapper with backoff + jitter
 
 HTTP transport: 10s connect timeout (AbortController with setTimeout), 30s overall timeout. Uses built-in `fetch`.
+
+All field accesses use optional chaining (`?.`). Include raw response body in `ClientError` for debugging. Retry on 403 if response contains `x-ratelimit-*` headers (secondary rate limits).
+
+Do NOT implement `x-initiator: agent` header in v1 (tool calling not supported). Document in code comments for future reference.
 
 Required headers per spec:
 ```

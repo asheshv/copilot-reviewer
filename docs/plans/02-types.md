@@ -118,7 +118,7 @@ This is the largest single file. It contains ALL shared interfaces and error cla
 
 Each error class extends `CopilotReviewError` and adds type-specific optional fields (e.g., `AuthError.authorizeUrl`, `ClientError.status`, `ClientError.retryAfter`, `ModelError.available`).
 
-`StreamChunk.type` must include `"warning"` in addition to the types in the spec (needed for NDJSON streaming format per spec 11).
+`StreamChunk.type` must include `"warning"` in addition to the types in spec 04 (needed for NDJSON streaming format per spec 11). This is a plan-level extension — spec 04 only defines `content | reasoning | error | done`, but the formatter needs `warning` for NDJSON warning chunks.
 
 - [ ] **Step 4: Run tests to verify they pass**
 

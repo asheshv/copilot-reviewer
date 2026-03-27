@@ -61,7 +61,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Implement mcp-server.ts**
 
-Use `@modelcontextprotocol/sdk` with stdio transport.
+Use `@modelcontextprotocol/sdk` with stdio transport. **Important:** Verify actual SDK export names before implementing — check `node_modules/@modelcontextprotocol/sdk` for correct schema names (`ListToolsRequestSchema`, `CallToolRequestSchema`, etc.). The SDK may use different names than shown below.
 
 ```typescript
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";

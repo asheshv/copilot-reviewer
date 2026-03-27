@@ -47,7 +47,7 @@ export { format, formatNdjsonChunk, detectHighSeverity } from "./formatter.js";
 export { review, reviewStream } from "./review.js";
 ```
 
-Note: adjust the exact export names to match what was actually implemented in tasks 3-10. The names above are based on the spec — the actual implementation may use slightly different names (e.g., `createReviewPipeline` instead of `review`).
+Note: adjust the exact export names to match what was actually implemented in tasks 3-10. The names above are based on the spec. This completely replaces the placeholder `index.ts` from Task 01.
 
 - [ ] **Step 2: Delete smoke test**
 
