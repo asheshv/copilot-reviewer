@@ -28,7 +28,8 @@ Options:
   --stream           Force streaming output
   --no-stream        Force buffered output
   --prompt <text>    Override review prompt
-  --config <path>    Override config file path
+  --config <path>    Override config file path (replaces project config layer)
+  --verbose          Enable debug logging to stderr
   --help             Show help
   --version          Show version
 
@@ -95,6 +96,10 @@ Explicit `--format` always overrides TTY detection.
 
 `--stream` / `--no-stream` flags always override.
 
+### Conflict: `--stream` + `--format json`
+
+`--stream --format json` is a **valid** combination. Output is newline-delimited JSON (NDJSON) — one JSON object per `StreamChunk`. This enables real-time machine consumption of streaming output (e.g., piping to a monitoring tool).
+
 ## Subcommands
 
 ### `copilot-review models`
@@ -103,8 +108,26 @@ Lists available models. See [05 — Model Management](./05-model-management.md).
 
 ### `copilot-review chat "<message>"`
 
-Free-form chat with Copilot. Not a review — just a question/answer. Useful for asking Copilot about code patterns, explaining functions, etc. Uses the same auth and client infrastructure.
+Free-form chat with Copilot. **Single-turn only** — send message, print response, exit. Not an interactive chat loop. Uses the same auth and client infrastructure.
+
+For multi-turn conversations, use a full MCP client (which can call the `copilot_chat` tool repeatedly with conversation history).
+
+## Default Mode
+
+`copilot-review` with no mode argument defaults to `local` mode (equivalent to `copilot-review local`). This is the most common use case: "show me what I've been working on."
+
+## Verbose / Debug Mode
+
+`--verbose` flag or `DEBUG=copilot-review` environment variable enables debug logging to stderr. See [07 — Review Orchestration](./07-review-orchestration.md) for what's logged.
 
 ## Argument Parser
 
 `commander` or `yargs` — decision deferred to implementation time. Both are mature and capable. Key requirement: subcommand support + positional arguments for modes.
+
+## Entry Point Modes
+
+The `copilot-review` binary can run in two modes:
+- **Default:** CLI review tool (this spec)
+- **`--mcp`:** Start as MCP server (see [09 — MCP Server](./09-mcp-server.md))
+
+This allows a single binary for both use cases. When `--mcp` is passed, the CLI delegates to `mcp-server.ts` and enters stdio transport mode.

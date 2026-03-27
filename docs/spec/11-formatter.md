@@ -78,7 +78,14 @@ Useful for piping into tools that don't handle markdown (email, Slack webhooks, 
 }
 ```
 
-Single parseable object containing everything — review, diff metadata, warnings, and exit code. The `exitCode` field lets machine consumers get the severity signal without parsing the CLI's exit code.
+Single parseable object containing everything — review, diff metadata, warnings, and exit code.
+
+The JSON format intentionally differs from the internal `ReviewResult` type:
+- It nests review fields under a `review` key for clearer structure
+- It flattens `DiffResult.stats` into top-level `diff` fields for readability
+- It adds `exitCode` — determined by regex-scanning the response content for `### HIGH` or `[HIGH]` patterns (see [10 — Error Handling](./10-error-handling.md) for details)
+
+The `exitCode` field lets machine consumers get the severity signal without parsing the CLI's exit code.
 
 ## Warnings
 

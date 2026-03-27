@@ -70,7 +70,9 @@ interface ResolvedConfig {
 
 ### Structured Settings
 
-`model`, `format`, `stream`, `defaultBase`, `ignorePaths` — higher layer simply replaces lower. No merging semantics.
+`model`, `format`, `stream`, `defaultBase` — higher layer simply replaces lower.
+
+`ignorePaths` — **union** across all layers (deduplicated). This is intentional: global config might exclude `*.lock` files, project config might exclude `vendor/`. Both exclusions should apply simultaneously. This is the one structured setting that merges rather than replaces.
 
 ### Prompt (the Review Instructions)
 
@@ -114,9 +116,26 @@ Each layer has two possible prompt sources:
 2. `config.md` (standalone file)
 
 Resolution:
-- If `config.json` exists and has a `prompt` field → use it (resolve path if relative)
+- If `config.json` exists and has a `prompt` field → use it (resolve path if applicable)
 - Else if `config.md` exists → use its contents
 - Else → layer contributes no prompt
+
+### Distinguishing Inline Text from File Path
+
+The `prompt` field can be inline text, a relative path, or an absolute path. Heuristic:
+
+1. If the value ends with `.md` and the file exists (resolved relative to the config directory) → treat as file path
+2. If the value starts with `/` (Unix) or a drive letter (Windows) and the file exists → treat as absolute file path
+3. Otherwise → treat as inline text
+
+If the value looks like a path but the file doesn't exist → `ConfigError { code: "prompt_not_found" }`.
+
+### `--config` Flag Scope
+
+`--config <path>` **replaces the project config layer only**. Global config still loads. The path can be:
+- Absolute path to a directory (looks for `config.json`/`config.md` inside)
+- Absolute path to a `.json` or `.md` file
+- Relative path (resolved from cwd)
 
 ## Edge Cases
 
@@ -129,6 +148,8 @@ Resolution:
 | Both missing at a layer | Layer contributes nothing |
 | Git root detection fails | Skip project layer |
 | `prompt` field is a path that doesn't exist | `ConfigError { code: "prompt_not_found" }` |
+| `config.md` is empty (0 bytes) or whitespace-only | Treated as "no prompt contribution" (same as missing) |
+| Multiple layers use `"mode": "replace"` | Each replace discards everything below; higher layer wins |
 
 ## Public API
 

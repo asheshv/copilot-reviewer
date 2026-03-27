@@ -79,6 +79,44 @@ Auth headers are provided by [auth.ts](./02-authentication.md) via `getAuthentic
 
 > `Copilot-Integration-Id: vscode-chat` — using the known working value from the API reference. If Copilot starts rejecting it, this is the first thing to investigate.
 
+### Conditional Header (future — tool calling)
+
+```
+x-initiator: agent
+```
+
+Set when the request contains tool call results (last message has `role: "tool"`). Not used in v1 (no tool calling loop), but documented here for future implementation.
+
+## HTTP Transport Config
+
+```
+Connect timeout:     10 seconds
+Overall timeout:     30 seconds
+TCP keepalive:       60 seconds
+Response buffering:  disabled (for streaming)
+```
+
+These match the recommended defaults from the [API reference](../reference/copilot-api-reference.md).
+
+## Rate Limit Headers
+
+Responses from `api.githubcopilot.com` may include:
+
+```
+x-ratelimit-limit: 5000
+x-ratelimit-remaining: 4999
+x-ratelimit-used: 1
+x-ratelimit-reset: 1711234567    (UTC epoch)
+x-ratelimit-resource: core
+```
+
+The client should:
+- Log `x-ratelimit-remaining` for debugging
+- Use `x-ratelimit-reset` in error messages ("Retry after <time>") when 429'd
+- Honor `retry-after` header (seconds to wait) when present
+
+> Note: Copilot-specific endpoints may have different rate limits than the general GitHub API. Inspect response headers empirically.
+
 ## SSE Streaming Parser (`streaming.ts`)
 
 Two SSE formats normalized into unified `StreamChunk`:
@@ -94,9 +132,12 @@ data: [DONE]
 
 Mapping:
 - `delta.content` → `{ type: "content", text }`
-- `delta.reasoning` or `delta.reasoning_content` → `{ type: "reasoning", text }`
-- `finish_reason: "stop"` → `{ type: "done", usage, model }`
+- `delta.reasoning` or `delta.reasoning_content` → `{ type: "reasoning", text }` (check both field names in streaming AND non-streaming modes)
+- `finish_reason: "stop"` OR `done_reason: "stop"` → `{ type: "done", usage, model }` (check both field names — different providers may use either)
+- `finish_reason: "tool_calls"` → ignore in v1 (no tool calling loop)
+- Any other `finish_reason` value → treat as abnormal termination → `{ type: "error" }`
 - `data: [DONE]` → stream termination
+- Stream ends without `[DONE]` or valid finish_reason → `ClientError { code: "stream_interrupted" }`, attempt line-by-line body parsing as recovery
 
 ### Responses API SSE
 
@@ -106,8 +147,8 @@ data: {"type":"response.completed","response":{"usage":{"total_tokens":150}}}
 ```
 
 Mapping:
-- `response.output_text.delta` → `{ type: "content", text }`
-- `response.completed` → `{ type: "done", usage, model }`
+- `response.output_text.delta` → `{ type: "content", text }` — **note:** `delta` can be a string OR `{text: "..."}` object. Parser must handle both forms.
+- `response.completed` or `response.done` → `{ type: "done", usage, model }`
 - `response.failed` → `{ type: "error", text: error.message }`
 
 ### SSE Parser
@@ -121,12 +162,17 @@ parseSSEStream(body: ReadableStream): AsyncIterable<object>
 - Yields parsed JSON objects
 - Skips malformed lines gracefully
 
+## Response Validation
+
+All response field accesses must be null-safe (optional chaining). If expected fields are missing (e.g., `choices[0]` doesn't exist in non-streaming response), throw `ClientError { code: "invalid_response" }` with the raw response body for debugging. This protects against API changes to the undocumented endpoints.
+
 ## Retry Logic
 
 | Status | Action |
 |--------|--------|
 | 429 (rate limited) | Retry, honor `retry-after` header |
 | 502, 503, 504 | Retry with backoff |
+| Network timeout | Retry (same as server error) |
 | 401 with `authorize_url` | `AuthError { code: "model_auth", authorizeUrl }` — no retry |
 | Other non-2xx | `ClientError` — no retry |
 
@@ -134,6 +180,7 @@ parseSSEStream(body: ReadableStream): AsyncIterable<object>
 - Max 2 retries
 - Exponential backoff with jitter: `min(max_backoff, base * 2^attempt) * random(0.5, 1.5)`
 - Honor `retry-after` header when present
+- Cap total retry time at 120 seconds
 
 See [10 — Error Handling](./10-error-handling.md) for error types.
 

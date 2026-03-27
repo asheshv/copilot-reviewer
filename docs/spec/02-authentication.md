@@ -103,6 +103,12 @@ See [10 — Error Handling](./10-error-handling.md) for the full error hierarchy
 | `exchange_failed` | Token exchange HTTP error | No |
 | `model_auth` | 401 with `authorize_url` — model needs user authorization | No |
 
+## Security
+
+- **Never log tokens** — OAuth and session tokens must not appear in error messages, debug output, or logs. If a token value appears in error context, redact all but first/last 4 characters.
+- **Log token metadata only** — for debugging, log: token source (env var, config file, gh CLI), expiry time, whether refresh was needed. Never the token value.
+- **Session token refresh must be mutex-protected** — if concurrent callers both detect expiry, only one should perform the exchange. Others wait for the same promise to resolve. This matters for the MCP server (long-lived, potentially concurrent tool calls).
+
 ## Future Enhancements
 
 > Documented here for reference. Not built in v1.

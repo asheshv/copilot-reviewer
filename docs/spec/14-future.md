@@ -18,6 +18,11 @@ These items are intentionally deferred. They are recorded here so the design acc
 - **Tool calling loop** — implement the multi-round tool calling protocol so Copilot can request additional file reads during review. This would let Copilot follow imports, read referenced functions, etc. See [Copilot API Reference](../reference/copilot-api-reference.md) for the tool calling protocol.
 - **GitHub Models provider** — alternative API endpoint (`models.github.ai`) with simpler auth but fewer features. See [Copilot API Reference](../reference/copilot-api-reference.md).
 
+### CLI
+
+- **`copilot-review quota`** — display remaining premium requests and reset date via `/copilot_internal/user` endpoint.
+- **Secret scanning** — pre-scan diff for common secret patterns (API keys, tokens) and warn before sending to Copilot API.
+
 ### Review Features
 
 - **BPE tokenizer** — accurate token counting using the model's actual tokenizer vocabulary (e.g., `o200k_base`). Replaces the char/4 heuristic.

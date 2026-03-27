@@ -89,13 +89,14 @@ Estimate: `(systemPrompt.length + diff.raw.length) / 4` (chars / 4 heuristic).
 Compare against `maxPromptTokens` from the resolved model (see [05 — Model Management](./05-model-management.md)):
 
 - If estimate < 80% of `maxPromptTokens` → proceed silently
-- If estimate >= 80% → **warn** (don't block). Warning includes:
+- If estimate >= 80% and < 100% → **warn** (don't block). Warning includes:
   - File list with per-file sizes
   - Suggestion: split review by file, or use a model with larger context
+- If estimate >= 100% of `maxPromptTokens` → **fail** with `ReviewError { code: "diff_too_large" }`. Don't waste an API call that will certainly be rejected.
 
-No truncation — the user decides. If Copilot's API rejects for token limit, that error propagates naturally.
+No truncation — the user decides how to reduce the diff (filter with `ignorePaths`, use a smaller diff mode, or pick a larger-context model).
 
-> No BPE tokenizer in v1. The char/4 heuristic is imprecise — better to let the API reject than to falsely block a review that would have fit.
+> No BPE tokenizer in v1. The char/4 heuristic is imprecise — better to let the API reject than to falsely block a review that would have fit. The 100% hard limit is a safeguard only for clearly impossible cases.
 
 ### 4. Assemble Messages
 
@@ -127,4 +128,20 @@ Pass response through [formatter](./11-formatter.md) with the configured format.
 
 ## `ignorePaths` Application
 
-`ignorePaths` from config is applied before step 1 — filtered files never enter the diff sent to Copilot.
+`review.ts` extracts `config.ignorePaths` and passes it to `collectDiff()` via `DiffOptions.ignorePaths`. Filtering happens inside `diff.ts` as post-processing — filtered files never enter the diff sent to Copilot.
+
+## Streaming Warnings
+
+`reviewStream()` returns `AsyncIterable<string>` — it has no return value to carry warnings. Instead:
+- Token budget warnings are emitted to `stderr` by the CLI **before** starting the stream (they're computed in step 3, before step 5).
+- The caller receives warnings via a separate `getWarnings(): string[]` method on the review context, or the function signature changes to return `{ stream: AsyncIterable<string>, warnings: string[] }`.
+
+## Logging
+
+When `--verbose` is set or `DEBUG=copilot-review` env var is present:
+- Log resolved config (with token values redacted)
+- Log auth token source and expiry time
+- Log API request URL, method, and headers (with Authorization redacted)
+- Log response status code and rate limit headers
+- Log git commands executed
+- All debug output goes to stderr.

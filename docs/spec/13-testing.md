@@ -41,9 +41,9 @@ test/
 | File | Key scenarios |
 |------|---------------|
 | `auth.test.ts` | Token resolution priority (env > config > gh). Each source failing falls to next. All failing produces AuthError. Session token caching and expiry logic. |
-| `client.test.ts` | Endpoint routing (responses vs chat completions). o1 model handling. Required headers present. Retry logic (429, 502/503/504). Non-retryable error propagation. 401 with authorize_url. |
-| `streaming.test.ts` | Chat completions SSE parsing (content, reasoning). Responses API event parsing. Stream termination (DONE marker, finish_reason). Interrupted stream error. Malformed SSE lines handled gracefully. |
-| `diff.test.ts` | Mode to git command mapping (all 7 modes). DiffResult parsing. Binary file detection. Renamed file handling. Empty diff error. Not-a-git-repo error. |
+| `client.test.ts` | Endpoint routing (responses vs chat completions). o1 model handling. Required headers present. Retry logic (429, 502/503/504, timeouts). Non-retryable error propagation. 401 with authorize_url. Null-safe response parsing (invalid_response error on unexpected shapes). Both `finish_reason` and `done_reason` field handling. |
+| `streaming.test.ts` | Chat completions SSE parsing (content, reasoning with both field names). Responses API event parsing (delta as string and as object). Stream termination (DONE marker, finish_reason, done_reason). Abnormal finish_reason values produce error. Stream without DONE marker produces stream_interrupted error. Interrupted stream error. Malformed SSE lines handled gracefully. |
+| `diff.test.ts` | Mode to git command mapping (all 7 modes). DiffResult parsing. Binary file detection. Renamed file handling. Empty diff error. Not-a-git-repo error. Git-not-installed error. Invalid ref error (range mode). ignorePaths filtering. Diff size limit enforcement. |
 | `config.test.ts` | Layer precedence (built-in, global, project, CLI). Extend mode concatenation order. Replace mode discards lower layers. Standalone .md without .json. Missing config silent skip. Malformed config produces ConfigError. ignorePaths glob matching. |
 | `formatter.test.ts` | Markdown: header, content passthrough, footer. Text: markdown stripped. JSON: valid JSON, all fields present, exitCode. Warnings in each format. |
 | `models.test.ts` | Model list parsing and filtering. Deduplication (highest version wins). Auto selection. Model validation (ID exists). Policy auto-enable. |
@@ -53,8 +53,8 @@ test/
 
 | File | Key scenarios |
 |------|---------------|
-| `cli.test.ts` | Argument parsing (all modes, all flags). Exit codes (0-5 mapping). stdout/stderr separation. TTY detection and format default. Help and version output. |
-| `mcp-server.test.ts` | Tool registration (3 tools exposed). Tool parameter validation. Structured error responses (isError: true). Server stays alive after errors. |
+| `cli.test.ts` | Argument parsing (all modes, all flags). Exit codes (0-5 mapping). stdout/stderr separation. TTY detection and format default. Help and version output. Subcommands (`models`, `chat`) execute and return valid output. `--mcp` flag starts MCP server mode. Default mode (no args) runs `local`. `--stream --format json` produces NDJSON. |
+| `mcp-server.test.ts` | Tool registration (3 tools exposed). Tool parameter validation (invalid mode, missing required params for pr/range/commits modes). Structured error responses (isError: true). Server stays alive after errors. Tool-to-ReviewOptions mapping correctness. |
 
 CLI tests spawn the CLI binary and mock the Copilot API via fixtures. MCP tests use the MCP SDK test client.
 

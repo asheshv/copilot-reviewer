@@ -53,7 +53,7 @@ Review code changes using GitHub Copilot.
 
 ```json
 {
-  "error": "auth_failed",
+  "error": "no_token",
   "message": "No GitHub token found. Set $GITHUB_TOKEN or run gh auth login.",
   "recoverable": false,
   "raw": "<underlying error details>"
@@ -87,6 +87,8 @@ Chat with GitHub Copilot about code.
 ```
 
 The optional `context` parameter lets agents pass in file contents or code snippets alongside a question without constructing the full prompt themselves.
+
+Implementation: calls `client.chat()` directly with `message` as the user message and `context` prepended as a system/user context block.
 
 ---
 
@@ -124,9 +126,46 @@ See [05 — Model Management](./05-model-management.md) for details on model lis
 |----------|-----------|
 | Always uses `lib/` directly | No process spawn overhead |
 | Always non-streaming | MCP protocol doesn't support streaming tool results |
+| `stream` config setting is ignored | Always uses `review()` (buffered), never `reviewStream()` |
 | Respects global + project config | Inherits `cwd` from MCP client for project detection |
 | Never throws | Errors returned as structured objects with `isError: true` on MCP `ToolResult` |
 | Server is long-lived | Session token cached across multiple tool invocations |
+| Sequential tool call handling | Tool calls are processed one at a time (no parallelism) to avoid race conditions on shared state (auth cache, model cache) |
+
+## Parameter Validation
+
+Before calling `lib/`, the MCP server validates tool parameters:
+
+| Validation | Error |
+|------------|-------|
+| Invalid `mode` enum value | `{ error: "invalid_parameter", message: "Invalid mode '...'. Valid: unstaged, staged, local, branch, pr, commits, range" }` |
+| `pr` mode without `pr` parameter | `{ error: "missing_parameter", message: "Mode 'pr' requires 'pr' parameter (PR number)" }` |
+| `range` mode without `range` parameter | `{ error: "missing_parameter", message: "Mode 'range' requires 'range' parameter" }` |
+| `commits` mode without `count` parameter | `{ error: "missing_parameter", message: "Mode 'commits' requires 'count' parameter" }` |
+
+Tool definitions should use JSON Schema `enum` constraints for `mode` to prevent invalid values at the protocol level.
+
+## Tool-to-ReviewOptions Mapping
+
+The MCP server bridges flat tool parameters to `ReviewOptions`:
+
+```typescript
+// copilot_review tool handler:
+const config = loadConfig({ prompt: params.prompt, model: params.model });
+const reviewOptions: ReviewOptions = {
+  diff: {
+    mode: params.mode,
+    base: params.base,
+    pr: params.pr,
+    range: params.range,
+    count: params.count,
+    ignorePaths: config.ignorePaths,
+  },
+  config,
+  model: params.model,
+};
+const result = await review(reviewOptions);
+```
 
 ## MCP Client Configuration
 
@@ -142,7 +181,7 @@ For consumers to register this server:
 }
 ```
 
-Or if installed globally:
+Or if installed globally (uses the `--mcp` flag — see [08 — CLI](./08-cli.md)):
 
 ```json
 {

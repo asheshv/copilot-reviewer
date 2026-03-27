@@ -35,11 +35,11 @@ github-copilot-reviewer/
 │   ├── mcp-server.test.ts         # integration tests
 │   ├── fixtures/                  # diffs, configs, recorded API responses
 │   └── e2e/                       # manual E2E tests
+├── .gitignore
 ├── docs/
 │   ├── spec/                      # this specification
 │   ├── adr/                       # architectural decision records
-│   ├── architecture/              # visual diagrams
-│   └── api/                       # Copilot API reference
+│   └── reference/                 # reverse-engineered API docs
 └── .copilot-review/               # project-level config (dogfooding)
     ├── config.json
     └── config.md
@@ -74,6 +74,7 @@ graph TB
     CLI --> CONFIG
     CLI --> REVIEW
     CLI --> MODELS
+    CLI --> CLIENT
     CLI --> FMT
     MCP --> CONFIG
     MCP --> REVIEW
@@ -85,6 +86,7 @@ graph TB
     REVIEW --> CONFIG
     REVIEW --> PROMPT
     REVIEW --> MODELS
+    REVIEW --> FMT
     CLIENT --> AUTH
     CLIENT --> STREAM
     CLIENT --> TYPES
@@ -99,7 +101,7 @@ The `lib/` directory is the contract between the two entry points.
 - `lib/` has zero dependencies on `process.argv`, MCP SDK, or any CLI framework.
 - `cli.ts` depends on `lib/` + CLI arg parser (`commander` or `yargs`).
 - `mcp-server.ts` depends on `lib/` + `@modelcontextprotocol/sdk`.
-- `types.ts` defines all shared types — Copilot API shapes, config, errors, results.
+- `types.ts` defines all shared types — Copilot API shapes, config, errors, results. All modules import it; edges omitted from diagrams for clarity.
 
 ## Internal Module Dependencies
 
@@ -110,6 +112,7 @@ graph LR
     REVIEW --> CONFIG["config.ts"]
     REVIEW --> PROMPT["prompt.ts"]
     REVIEW --> MODELS["models.ts"]
+    REVIEW --> FMT["formatter.ts"]
 
     CLIENT --> AUTH["auth.ts"]
     CLIENT --> STREAM["streaming.ts"]
@@ -119,7 +122,7 @@ graph LR
     DIFF --> TYPES
     MODELS --> CLIENT
     MODELS --> TYPES
-    FMT["formatter.ts"] --> TYPES
+    FMT --> TYPES
     PROMPT --> TYPES
 ```
 
@@ -146,3 +149,30 @@ graph LR
 - No `axios`/`node-fetch` — use Node.js built-in `fetch` (available since Node 18).
 - No BPE tokenizer library — char/4 heuristic for v1.
 - No `chalk`/`ora` — minimal terminal formatting, avoid heavy deps.
+
+## Runtime Requirements
+
+- **Node.js >= 18.0.0** — required for built-in `fetch`. Recommended: 20.x LTS.
+- Document in `package.json`: `"engines": { "node": ">=18.0.0" }`
+
+## Package Configuration
+
+```json
+{
+  "main": "dist/lib/index.js",
+  "types": "dist/lib/index.d.ts",
+  "bin": { "copilot-review": "dist/cli.js" },
+  "files": ["dist/", "prompts/"]
+}
+```
+
+MCP server is invoked directly via `node dist/mcp-server.js`, not published as a separate bin.
+
+## .gitignore
+
+```
+node_modules/
+dist/
+*.log
+.env
+```
