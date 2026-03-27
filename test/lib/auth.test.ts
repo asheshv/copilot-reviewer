@@ -406,6 +406,22 @@ describe("exchangeSessionToken", () => {
     }
   });
 
+  it.each([
+    { value: null, label: "null" },
+    { value: [1, 2, 3], label: "array" },
+    { value: "string", label: "string" },
+  ])("rejects non-object JSON response: $label", async ({ value }) => {
+    const mockFetch = vi.mocked(global.fetch);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => value,
+    } as Response);
+
+    await expect(exchangeSessionToken("gho_nonobj_test1234")).rejects.toMatchObject({
+      code: "exchange_failed",
+    });
+  });
+
   it("clears stale cache on exchange error", async () => {
     const mockFetch = vi.mocked(global.fetch);
 
