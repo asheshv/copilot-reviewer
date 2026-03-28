@@ -410,6 +410,34 @@ describe("ModelManager", () => {
       expect(models).toHaveLength(1);
       expect(models[0].endpoints).toEqual(["/chat/completions", "/responses"]);
     });
+
+    it("prefers endpoints over supported_endpoints when both present", async () => {
+      const bothResponse = {
+        data: [
+          {
+            id: "both-model",
+            name: "Both",
+            version: "2024-01-01",
+            model_picker_enabled: true,
+            capabilities: { type: "chat", limits: { max_prompt_tokens: 4000, max_output_tokens: 1000 } },
+            endpoints: ["/preferred"],
+            supported_endpoints: ["/fallback"],
+          },
+        ],
+      };
+
+      server.use(
+        http.get("https://api.githubcopilot.com/models", () => {
+          return HttpResponse.json(bothResponse);
+        })
+      );
+
+      const manager = new ModelManager(authProvider);
+      const models = await manager.listModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0].endpoints).toEqual(["/preferred"]);
+    });
   });
 
   describe("autoSelect()", () => {

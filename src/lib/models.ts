@@ -5,20 +5,23 @@ import { ModelError, ClientError } from "./types.js";
 
 const BASE_URL = "https://api.githubcopilot.com";
 const CACHE_TTL_MS = 300_000; // 5 minutes
+const DEFAULT_TOKENIZER = "o200k_base"; // Fallback for API responses missing tokenizer
 
 /**
  * Raw model data from the API.
+ * All fields except id/name/version/model_picker_enabled are optional —
+ * the undocumented API may omit them.
  */
 interface RawModelData {
   id: string;
   name: string;
   version: string;
   model_picker_enabled: boolean;
-  capabilities: {
+  capabilities?: {
     type: string;
-    limits: {
-      max_prompt_tokens: number;
-      max_output_tokens: number;
+    limits?: {
+      max_prompt_tokens?: number;
+      max_output_tokens?: number;
     };
   };
   endpoints?: string[];
@@ -102,7 +105,7 @@ export class ModelManager {
 
     // Filter to chat-capable, user-selectable models
     let filtered = rawModels.filter(
-      (m) => m.capabilities.type === "chat" && m.model_picker_enabled
+      (m) => m.capabilities?.type === "chat" && m.model_picker_enabled
     );
 
     // Auto-enable disabled models
@@ -261,16 +264,28 @@ export class ModelManager {
    * Transform raw model data to ModelInfo.
    */
   private _transformToModelInfo(raw: RawModelData): ModelInfo {
+    // Resolve endpoints: prefer "endpoints", fall back to "supported_endpoints"
+    const endpoints = raw.endpoints ?? raw.supported_endpoints ?? [];
+    if (endpoints.length === 0) {
+      console.warn(`Model ${raw.id} has no endpoints defined; may be non-functional`);
+    }
+
+    // Validate critical capability limits — 0 means unusable
+    const maxPromptTokens = raw.capabilities?.limits?.max_prompt_tokens ?? 0;
+    const maxOutputTokens = raw.capabilities?.limits?.max_output_tokens ?? 0;
+    if (maxPromptTokens === 0 || maxOutputTokens === 0) {
+      console.warn(`Model ${raw.id} has zero token limits (prompt=${maxPromptTokens}, output=${maxOutputTokens}); may be unusable`);
+    }
+
     return {
       id: raw.id,
       name: raw.name,
-      // API may use "endpoints" or "supported_endpoints" — normalize to always-present array
-      endpoints: raw.endpoints ?? raw.supported_endpoints ?? [],
+      endpoints,
       streaming: raw.streaming ?? false,
       toolCalls: raw.tool_calls ?? false,
-      maxPromptTokens: raw.capabilities?.limits?.max_prompt_tokens ?? 0,
-      maxOutputTokens: raw.capabilities?.limits?.max_output_tokens ?? 0,
-      tokenizer: raw.tokenizer ?? "o200k_base",
+      maxPromptTokens,
+      maxOutputTokens,
+      tokenizer: raw.tokenizer ?? DEFAULT_TOKENIZER,
     };
   }
 
