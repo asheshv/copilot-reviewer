@@ -1,7 +1,7 @@
 // src/lib/config.ts
 import { readFile, access } from "fs/promises";
 import { homedir } from "os";
-import { join, isAbsolute, dirname } from "path";
+import { join, isAbsolute, dirname, resolve } from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { loadBuiltInPrompt } from "./prompt.js";
@@ -120,8 +120,8 @@ async function loadConfigLayer(
       jsonConfig = JSON.parse(jsonContent);
     } catch (parseError) {
       throw new ConfigError(
-        "malformed_config",
-        `Failed to parse config file: ${(parseError as Error).message}`,
+        "malformed_json",
+        `Failed to parse config: ${jsonPath}`,
         jsonPath,
         false,
         parseError as Error
@@ -177,14 +177,27 @@ async function resolvePrompt(value: string, configDir: string): Promise<string> 
   // Heuristic: if ends with .md and file exists, treat as path
   if (value.endsWith(".md")) {
     const absolutePath = isAbsolute(value) ? value : join(configDir, value);
+    const resolved = resolve(absolutePath);
+
+    // Security: prevent path traversal for relative paths
+    // Relative paths must resolve within the config directory
+    if (!isAbsolute(value) && !resolved.startsWith(resolve(configDir))) {
+      throw new ConfigError(
+        "prompt_not_found",
+        `Prompt path must be within config directory: ${value}`,
+        resolved,
+        false
+      );
+    }
+
     try {
-      await access(absolutePath);
-      return await readFile(absolutePath, "utf-8");
+      await access(resolved);
+      return await readFile(resolved, "utf-8");
     } catch {
       throw new ConfigError(
         "prompt_not_found",
-        `Prompt file not found: ${absolutePath}`,
-        absolutePath,
+        `Prompt file not found: ${resolved}`,
+        resolved,
         false
       );
     }

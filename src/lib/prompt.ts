@@ -27,12 +27,13 @@ export function assembleUserMessage(diff: DiffResult): string {
   const { stats, raw } = diff;
 
   const message = [
-    "Please review the following code changes:",
+    "Review the following changes.",
     "",
-    `**Files changed:** ${stats.filesChanged}`,
-    `**Insertions:** ${stats.insertions}`,
-    `**Deletions:** ${stats.deletions}`,
+    "## Summary",
+    `Files changed: ${stats.filesChanged}`,
+    `Insertions: +${stats.insertions}, Deletions: -${stats.deletions}`,
     "",
+    "## Diff",
     "```diff",
     raw,
     "```",

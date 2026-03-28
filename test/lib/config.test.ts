@@ -175,7 +175,7 @@ describe("loadConfig", () => {
 
       await expect(loadConfig()).rejects.toThrow(ConfigError);
       await expect(loadConfig()).rejects.toMatchObject({
-        code: "malformed_config",
+        code: "malformed_json",
         name: "ConfigError",
       });
     });

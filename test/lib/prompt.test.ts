@@ -44,9 +44,11 @@ describe("assembleUserMessage", () => {
 
     const message = assembleUserMessage(diff);
 
-    expect(message).toContain("**Files changed:** 1");
-    expect(message).toContain("**Insertions:** 1");
-    expect(message).toContain("**Deletions:** 1");
+    expect(message).toContain("Review the following changes.");
+    expect(message).toContain("## Summary");
+    expect(message).toContain("Files changed: 1");
+    expect(message).toContain("Insertions: +1, Deletions: -1");
+    expect(message).toContain("## Diff");
     expect(message).toContain("```diff");
     expect(message).toContain(diff.raw);
     expect(message).toContain("```");
@@ -68,9 +70,8 @@ describe("assembleUserMessage", () => {
 
     const message = assembleUserMessage(diff);
 
-    expect(message).toContain("**Files changed:** 2");
-    expect(message).toContain("**Insertions:** 15");
-    expect(message).toContain("**Deletions:** 2");
+    expect(message).toContain("Files changed: 2");
+    expect(message).toContain("Insertions: +15, Deletions: -2");
   });
 
   it("formats diff with zero deletions", () => {
@@ -86,7 +87,7 @@ describe("assembleUserMessage", () => {
 
     const message = assembleUserMessage(diff);
 
-    expect(message).toContain("**Deletions:** 0");
+    expect(message).toContain("Insertions: +20, Deletions: -0");
   });
 
   it("includes raw diff in code block", () => {
