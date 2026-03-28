@@ -203,19 +203,15 @@ async function resolvePrompt(value: string, configDir: string): Promise<string> 
     }
   }
 
-  // If starts with / (Unix) or drive letter (Windows), treat as absolute path
+  // Absolute paths are NOT allowed in prompt field (security: prevents reading arbitrary files
+  // via malicious .copilot-review/config.json committed to a repo)
   if (isAbsolute(value)) {
-    try {
-      await access(value);
-      return await readFile(value, "utf-8");
-    } catch {
-      throw new ConfigError(
-        "prompt_not_found",
-        `Prompt file not found: ${value}`,
-        value,
-        false
-      );
-    }
+    throw new ConfigError(
+      "prompt_not_found",
+      `Absolute paths are not allowed in prompt field for security. Use a relative path within the config directory: ${value}`,
+      value,
+      false
+    );
   }
 
   // Otherwise, treat as inline text

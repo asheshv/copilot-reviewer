@@ -431,18 +431,26 @@ describe("CLI", () => {
     });
 
     it("accepts all 7 modes", async () => {
-      const modes = ["unstaged", "staged", "local", "branch", "pr", "commits", "range"];
+      const modeArgs: Record<string, string> = {
+        unstaged: "",
+        staged: "",
+        local: "",
+        branch: "main",
+        pr: "123",
+        commits: "5",
+        range: "abc..def",
+      };
       mockReview.mockResolvedValue(makeReviewResult());
       mockDetectHigh.mockReturnValue(false);
 
-      for (const mode of modes) {
+      for (const [mode, arg] of Object.entries(modeArgs)) {
         vi.clearAllMocks();
         mockLoadConfig.mockResolvedValue(makeConfig());
         mockReview.mockResolvedValue(makeReviewResult());
         mockDetectHigh.mockReturnValue(false);
 
-        const code = await handleReview(mode, "arg", {
-          model: "auto",
+        const code = await handleReview(mode, arg || undefined, {
+          model: undefined,
           format: "markdown",
           stream: false,
           config: undefined,

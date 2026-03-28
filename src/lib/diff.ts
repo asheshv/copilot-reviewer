@@ -42,6 +42,9 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
       if (!base) {
         throw new DiffError("base_not_found", "base parameter required for branch mode", false);
       }
+      if (base.startsWith("-")) {
+        throw new DiffError("invalid_ref", `Invalid base branch: '${base}'. Branch names cannot start with '-'.`, false);
+      }
       command = "git";
       args = ["diff", `${base}...HEAD`];
       break;
@@ -65,6 +68,9 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
     case "range":
       if (!range) {
         throw new DiffError("invalid_ref", "range parameter required for range mode", false);
+      }
+      if (range.startsWith("-")) {
+        throw new DiffError("invalid_ref", `Invalid range: '${range}'. Range cannot start with '-'.`, false);
       }
       command = "git";
       args = ["diff", range];

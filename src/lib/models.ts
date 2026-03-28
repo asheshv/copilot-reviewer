@@ -189,8 +189,8 @@ export class ModelManager {
       (m) => m.policy && m.policy.state !== "enabled"
     );
 
-    // Enable all disabled models in parallel
-    await Promise.all(
+    // Enable all disabled models in parallel (best-effort, don't fail if any reject)
+    await Promise.allSettled(
       disabledModels.map((m) => this._enablePolicy(m.id))
     );
   }

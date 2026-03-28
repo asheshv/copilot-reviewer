@@ -1,6 +1,7 @@
 // src/lib/streaming.ts
 
 import type { StreamChunk } from "./types.js";
+import { ClientError } from "./types.js";
 
 /**
  * Parses a ReadableStream containing SSE (Server-Sent Events) formatted data.
@@ -33,7 +34,11 @@ export async function* parseSSEStream(
 
       // Guard against unbounded buffer growth (malicious/malformed stream)
       if (buffer.length > MAX_LINE_BUFFER) {
-        break;
+        throw new ClientError(
+          "stream_interrupted",
+          "SSE buffer overflow: line exceeds 1MB limit",
+          false
+        );
       }
 
       // Process complete lines (handle both \n and \r\n)

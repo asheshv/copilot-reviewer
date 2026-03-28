@@ -98,16 +98,26 @@ export function validateReviewParams(params: Record<string, unknown>): void {
 
 function mapErrorToToolResult(err: unknown): CallToolResult {
   if (err instanceof CopilotReviewError) {
+    const result: Record<string, unknown> = {
+      error: err.code,
+      message: err.message,
+      recoverable: err.recoverable,
+    };
+    // Include type-specific fields per spec 10
+    if ("retryAfter" in err && (err as any).retryAfter != null) {
+      result.retryAfter = (err as any).retryAfter;
+    }
+    if ("authorizeUrl" in err && (err as any).authorizeUrl != null) {
+      result.authorizeUrl = (err as any).authorizeUrl;
+    }
+    if ("available" in err && (err as any).available != null) {
+      result.available = (err as any).available;
+    }
     return {
       isError: true,
       content: [{
         type: "text",
-        text: JSON.stringify({
-          error: err.code,
-          message: err.message,
-          recoverable: err.recoverable,
-          raw: err.cause?.message,
-        }),
+        text: JSON.stringify(result),
       }],
     };
   }

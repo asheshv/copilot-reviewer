@@ -8,6 +8,7 @@ import {
   ClientError,
   ModelError,
   ConfigError,
+  ReviewError,
   EXIT_CODES,
   type DiffOptions,
   type OutputFormat,
@@ -49,6 +50,7 @@ export function mapErrorToExitCode(err: unknown): number {
   if (err instanceof DiffError) return EXIT_CODES.DIFF_ERROR;
   if (err instanceof ConfigError) return EXIT_CODES.CONFIG_ERROR;
   if (err instanceof ModelError) return EXIT_CODES.MODEL_ERROR;
+  if (err instanceof ReviewError) return EXIT_CODES.DIFF_ERROR; // diff_too_large is a review-level diff error
   if (err instanceof ClientError) return EXIT_CODES.API_ERROR;
   return EXIT_CODES.API_ERROR; // Unknown errors get exit code 4
 }
@@ -66,11 +68,24 @@ function buildDiffOptions(mode: string, modeArg: string | undefined, defaultBase
       return { mode: "local" };
     case "branch":
       return { mode: "branch", base: modeArg ?? defaultBase };
-    case "pr":
-      return { mode: "pr", pr: modeArg ? parseInt(modeArg, 10) : undefined };
-    case "commits":
-      return { mode: "commits", count: modeArg ? parseInt(modeArg, 10) : undefined };
+    case "pr": {
+      const pr = modeArg ? parseInt(modeArg, 10) : NaN;
+      if (isNaN(pr)) {
+        throw new DiffError("pr_not_found", "PR mode requires a numeric PR number.", false);
+      }
+      return { mode: "pr", pr };
+    }
+    case "commits": {
+      const count = modeArg ? parseInt(modeArg, 10) : NaN;
+      if (isNaN(count) || count <= 0) {
+        throw new DiffError("invalid_ref", "Commits mode requires a positive number.", false);
+      }
+      return { mode: "commits", count };
+    }
     case "range":
+      if (!modeArg) {
+        throw new DiffError("invalid_ref", "Range mode requires a ref range (e.g., main..HEAD).", false);
+      }
       return { mode: "range", range: modeArg };
     default:
       return { mode: "local" };
@@ -280,7 +295,7 @@ export function buildProgram(): Command {
   program
     .argument("[mode]", "Diff mode: unstaged|staged|local|branch|pr|commits|range", "local")
     .argument("[modeArg]", "Mode argument (base branch, PR number, etc.)")
-    .option("--model <id>", "Model to use", "auto")
+    .option("--model <id>", "Model to use")
     .option("--format <fmt>", "Output format: text|markdown|json")
     .option("--stream", "Force streaming output")
     .option("--no-stream", "Force buffered output")
