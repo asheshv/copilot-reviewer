@@ -340,7 +340,7 @@ describe("ModelManager", () => {
       await manager.listModels();
       expect(fetchCount).toBe(2);
     });
-    it("normalizes missing/optional fields with safe defaults", async () => {
+    it("normalizes missing optional fields with safe defaults", async () => {
       const sparseResponse = {
         data: [
           {
@@ -355,7 +355,8 @@ describe("ModelManager", () => {
                 max_output_tokens: 1000,
               },
             },
-            // No endpoints, streaming, tool_calls, or tokenizer fields
+            // Has endpoints (required to pass filter) but no other optional fields
+            endpoints: ["/chat/completions"],
           },
         ],
       };
@@ -370,12 +371,85 @@ describe("ModelManager", () => {
       const models = await manager.listModels();
 
       expect(models).toHaveLength(1);
-      expect(models[0].endpoints).toEqual([]);
+      expect(models[0].endpoints).toEqual(["/chat/completions"]);
       expect(models[0].streaming).toBe(false);
       expect(models[0].toolCalls).toBe(false);
       expect(models[0].tokenizer).toBe("o200k_base");
       expect(models[0].maxPromptTokens).toBe(4000);
       expect(models[0].maxOutputTokens).toBe(1000);
+    });
+
+    it("filters out models with no endpoints", async () => {
+      const noEndpointsResponse = {
+        data: [
+          {
+            id: "no-endpoints",
+            name: "NoEndpoints",
+            version: "2024-01-01",
+            model_picker_enabled: true,
+            capabilities: { type: "chat", limits: { max_prompt_tokens: 4000, max_output_tokens: 1000 } },
+            // No endpoints or supported_endpoints
+          },
+          {
+            id: "has-endpoints",
+            name: "HasEndpoints",
+            version: "2024-01-01",
+            model_picker_enabled: true,
+            capabilities: { type: "chat", limits: { max_prompt_tokens: 8000, max_output_tokens: 2000 } },
+            endpoints: ["/chat/completions"],
+          },
+        ],
+      };
+
+      server.use(
+        http.get("https://api.githubcopilot.com/models", () => {
+          return HttpResponse.json(noEndpointsResponse);
+        })
+      );
+
+      const manager = new ModelManager(authProvider);
+      const models = await manager.listModels();
+
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe("has-endpoints");
+    });
+
+    it("filters out models with completely missing capabilities (zero tokens)", async () => {
+      const noCapsResponse = {
+        data: [
+          {
+            id: "no-caps",
+            name: "No Caps",
+            version: "2024-01-01",
+            model_picker_enabled: true,
+            // No capabilities at all — will get 0 tokens, filtered out
+          },
+          {
+            id: "valid-model",
+            name: "Valid",
+            version: "2024-01-01",
+            model_picker_enabled: true,
+            capabilities: {
+              type: "chat",
+              limits: { max_prompt_tokens: 8000, max_output_tokens: 2000 },
+            },
+            endpoints: ["/chat/completions"],
+          },
+        ],
+      };
+
+      server.use(
+        http.get("https://api.githubcopilot.com/models", () => {
+          return HttpResponse.json(noCapsResponse);
+        })
+      );
+
+      const manager = new ModelManager(authProvider);
+      const models = await manager.listModels();
+
+      // Model without capabilities is filtered out (0 token limits)
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe("valid-model");
     });
 
     it("uses supported_endpoints when endpoints is absent", async () => {
