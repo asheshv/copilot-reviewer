@@ -30,9 +30,11 @@ describe("CopilotClient", () => {
   describe("endpoint routing", () => {
     it("uses Responses API when useResponsesApi is true", async () => {
       let capturedPath = "";
+      let capturedBody: any;
       server.use(
-        http.post("https://api.githubcopilot.com/responses", ({ request }) => {
+        http.post("https://api.githubcopilot.com/responses", async ({ request }) => {
           capturedPath = new URL(request.url).pathname;
+          capturedBody = await request.json();
           return HttpResponse.json(responsesApiFixture);
         })
       );
@@ -47,6 +49,11 @@ describe("CopilotClient", () => {
 
       await client.chat(request, true);
       expect(capturedPath).toBe("/responses");
+
+      // Verify Responses API body format
+      expect(capturedBody.instructions).toBe("You are a code reviewer");
+      expect(capturedBody.input).toEqual([{ role: "user", content: "Review this code" }]);
+      expect(capturedBody.messages).toBeUndefined();
     });
 
     it("uses Chat Completions when useResponsesApi is false or omitted", async () => {
@@ -281,7 +288,13 @@ describe("CopilotClient", () => {
         stream: false,
       };
 
-      await expect(client.chat(request, true)).rejects.toThrow(ClientError);
+      try {
+        await client.chat(request, true);
+        expect.fail("Expected error to be thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(ClientError);
+        expect((error as ClientError).code).toBe("request_failed");
+      }
     });
 
     it("extracts content from output[].content[] with multiple type values", async () => {
@@ -508,7 +521,7 @@ describe("CopilotClient", () => {
             return new HttpResponse(null, {
               status: 403,
               headers: {
-                "x-ratelimit-remaining": "0",
+                "x-ratelimit-remaining": "5",
                 "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 1), // 1 second in future
               },
             });
@@ -551,7 +564,7 @@ describe("CopilotClient", () => {
       expect(attemptCount).toBe(3); // Initial + 2 retries
     });
 
-    it("does not retry on 401 with authorize_url", async () => {
+    it("does not retry on 401 with authorize_url (code: model_auth)", async () => {
       let attemptCount = 0;
       server.use(
         http.post("https://api.githubcopilot.com/chat/completions", () => {
@@ -571,8 +584,44 @@ describe("CopilotClient", () => {
         stream: false,
       };
 
-      await expect(client.chat(request, false)).rejects.toThrow();
-      expect(attemptCount).toBe(1); // No retry
+      try {
+        await client.chat(request, false);
+        expect.fail("Expected error to be thrown");
+      } catch (error: any) {
+        expect(attemptCount).toBe(1); // No retry
+        expect(error.code).toBe("model_auth");
+        expect(error.authorizeUrl).toBe("https://github.com/login");
+      }
+    });
+
+    it("does not retry on 401 WITHOUT authorize_url (code: request_failed)", async () => {
+      let attemptCount = 0;
+      server.use(
+        http.post("https://api.githubcopilot.com/chat/completions", () => {
+          attemptCount++;
+          return HttpResponse.json(
+            { error: { message: "Unauthorized" } },
+            { status: 401 }
+          );
+        })
+      );
+
+      const client = new CopilotClient(authProvider);
+      const request: ChatRequest = {
+        model: "gpt-4",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "Test" }],
+        stream: false,
+      };
+
+      try {
+        await client.chat(request, false);
+        expect.fail("Expected error to be thrown");
+      } catch (error: any) {
+        expect(attemptCount).toBe(1); // No retry
+        expect(error.code).toBe("request_failed");
+        expect(error.authorizeUrl).toBeUndefined();
+      }
     });
 
     it("does not retry on other non-2xx", async () => {
@@ -594,6 +643,52 @@ describe("CopilotClient", () => {
 
       await expect(client.chat(request, false)).rejects.toThrow(ClientError);
       expect(attemptCount).toBe(1); // No retry
+    });
+
+    it("assigns correct error codes for different status codes", async () => {
+      const testCases = [
+        { status: 429, expectedCode: "rate_limited", shouldRetry: true },
+        { status: 502, expectedCode: "server_error", shouldRetry: true },
+        { status: 503, expectedCode: "server_error", shouldRetry: true },
+        { status: 504, expectedCode: "server_error", shouldRetry: true },
+        { status: 400, expectedCode: "request_failed", shouldRetry: false },
+      ];
+
+      for (const { status, expectedCode, shouldRetry } of testCases) {
+        let attemptCount = 0;
+        server.use(
+          http.post("https://api.githubcopilot.com/chat/completions", () => {
+            attemptCount++;
+            if (shouldRetry && attemptCount === 1) {
+              return HttpResponse.json({ error: { message: `Error ${status}` } }, { status });
+            }
+            if (!shouldRetry) {
+              return HttpResponse.json({ error: { message: `Error ${status}` } }, { status });
+            }
+            return HttpResponse.json(chatCompletionsFixture);
+          })
+        );
+
+        const client = new CopilotClient(authProvider);
+        const request: ChatRequest = {
+          model: "gpt-4",
+          systemPrompt: "",
+          messages: [{ role: "user", content: "Test" }],
+          stream: false,
+        };
+
+        try {
+          await client.chat(request, false);
+          if (!shouldRetry) {
+            expect.fail(`Expected error to be thrown for status ${status}`);
+          }
+        } catch (error: any) {
+          if (shouldRetry) {
+            expect.fail(`Should have succeeded after retry for status ${status}`);
+          }
+          expect(error.code).toBe(expectedCode);
+        }
+      }
     });
   });
 

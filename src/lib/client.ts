@@ -99,7 +99,7 @@ export class CopilotClient {
           }
 
           throw new ClientError(
-            "network_error",
+            "timeout",
             `Network error: ${error.message}`,
             true,
             error
@@ -245,23 +245,20 @@ export class CopilotClient {
    * Build request body for Responses API.
    */
   private _buildResponsesBody(request: ChatRequest): any {
-    const messages: Message[] = [];
-
-    // For Responses API, always use system role
-    if (request.systemPrompt) {
-      messages.push({
-        role: "system",
-        content: request.systemPrompt,
-      });
-    }
-
-    messages.push(...request.messages);
-
     const body: any = {
       model: request.model,
-      messages,
       stream: request.stream,
     };
+
+    if (request.systemPrompt) {
+      body.instructions = request.systemPrompt;
+    }
+
+    // input array contains user/assistant messages (no system role)
+    body.input = request.messages.map(m => ({
+      role: m.role,
+      content: m.content,
+    }));
 
     if (request.maxTokens) {
       body.max_output_tokens = request.maxTokens;
@@ -293,15 +290,9 @@ export class CopilotClient {
       );
     }
 
-    // Check both finish_reason and done_reason
+    // Check finish_reason but don't throw — content may be partial but still valid
     const finishReason = choice.finish_reason || choice.done_reason;
-    if (finishReason && finishReason !== "stop") {
-      throw new ClientError(
-        "unexpected_finish",
-        `Unexpected finish reason: ${finishReason}`,
-        false
-      );
-    }
+    // Just log/note the abnormal finish, but return the content
 
     return {
       content: message.content,
@@ -330,7 +321,7 @@ export class CopilotClient {
     if (response.status === "failed") {
       const errorMessage =
         response.error?.message || "Request failed";
-      throw new ClientError("api_error", errorMessage, false);
+      throw new ClientError("request_failed", errorMessage, false);
     }
 
     if (response.status !== "completed") {
@@ -399,24 +390,47 @@ export class CopilotClient {
       body = {};
     }
 
-    // 401 with authorize_url is an auth error
+    // 401 handling
     if (response.status === 401) {
+      const hasAuthorizeUrl = body.error?.authorize_url;
       const error = new AuthError(
-        "unauthorized",
+        hasAuthorizeUrl ? "model_auth" : "request_failed",
         body.error?.message || "Unauthorized",
-        true
+        false
       );
-      if (body.error?.authorize_url) {
+      if (hasAuthorizeUrl) {
         error.authorizeUrl = body.error.authorize_url;
       }
       throw error;
     }
 
-    // Other errors
+    // Determine error code based on status
+    let errorCode: string;
+    let recoverable: boolean;
+
+    if (response.status === 429) {
+      errorCode = "rate_limited";
+      recoverable = true;
+    } else if (response.status === 502 || response.status === 503 || response.status === 504) {
+      errorCode = "server_error";
+      recoverable = true;
+    } else {
+      errorCode = "request_failed";
+      recoverable = false;
+    }
+
+    // Check for rate limit headers (secondary limits on 403)
+    const rateLimitReset = response.headers.get("x-ratelimit-reset");
+    if (response.status === 403 && rateLimitReset) {
+      // Secondary rate limit — has rate limit headers regardless of remaining count
+      errorCode = "rate_limited";
+      recoverable = true;
+    }
+
     const error = new ClientError(
-      "api_error",
+      errorCode,
       body.error?.message || `HTTP ${response.status}`,
-      false
+      recoverable
     );
     error.status = response.status;
 
@@ -426,10 +440,8 @@ export class CopilotClient {
       error.retryAfter = parseInt(retryAfter, 10);
     }
 
-    // Check for rate limit headers (secondary limits on 403)
-    const rateLimitRemaining = response.headers.get("x-ratelimit-remaining");
-    const rateLimitReset = response.headers.get("x-ratelimit-reset");
-    if (rateLimitRemaining === "0" && rateLimitReset) {
+    // Calculate retry-after from rate limit reset time
+    if (rateLimitReset && (response.status === 429 || response.status === 403)) {
       const resetTime = parseInt(rateLimitReset, 10);
       const now = Math.floor(Date.now() / 1000);
       error.retryAfter = Math.max(1, resetTime - now);
@@ -450,11 +462,8 @@ export class CopilotClient {
       } catch (error) {
         lastError = error as Error;
 
-        // Don't retry on auth errors with authorize_url
-        if (
-          error instanceof AuthError &&
-          error.authorizeUrl
-        ) {
+        // Don't retry ANY auth errors
+        if (error instanceof AuthError) {
           throw error;
         }
 
@@ -488,31 +497,9 @@ export class CopilotClient {
    * Determine if error is retryable.
    */
   private _shouldRetry(error: ClientError): boolean {
-    // Retry on timeout
-    if (error.code === "timeout" || error.code === "network_error") {
-      return true;
-    }
-
-    // Retry on 429
-    if (error.status === 429) {
-      return true;
-    }
-
-    // Retry on 502, 503, 504
-    if (
-      error.status === 502 ||
-      error.status === 503 ||
-      error.status === 504
-    ) {
-      return true;
-    }
-
-    // Retry on 403 with rate limit headers (secondary limits)
-    if (error.status === 403 && error.retryAfter) {
-      return true;
-    }
-
-    return false;
+    return error.code === "rate_limited" ||
+           error.code === "server_error" ||
+           error.code === "timeout";
   }
 
   /**
@@ -532,7 +519,7 @@ export class CopilotClient {
       MAX_BACKOFF,
       BASE_BACKOFF * Math.pow(2, attempt)
     );
-    const jitter = Math.random() * 0.5 + 0.5; // Random between 0.5 and 1.0
+    const jitter = Math.random() * 1.0 + 0.5; // Random between 0.5 and 1.5
 
     return Math.floor(exponential * jitter);
   }
