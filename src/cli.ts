@@ -346,12 +346,16 @@ async function main(): Promise<void> {
 }
 
 // Only run main when this file is the entry point (not when imported for testing)
-const isDirectExecution =
-  typeof process !== "undefined" &&
-  process.argv[1] &&
-  (process.argv[1].endsWith("/cli.js") || process.argv[1].endsWith("/cli.ts"));
+// Run main() only when executed as a CLI entry point, not when imported by tests.
+// Check: argv[1] resolves to this file (dist/cli.js) or the bin symlink (copilot-review).
+const scriptPath = process.argv[1] ?? "";
+const isEntryPoint =
+  scriptPath.endsWith("/cli.js") ||
+  scriptPath.endsWith("/cli.ts") ||
+  scriptPath.endsWith("/copilot-review") ||
+  scriptPath.endsWith("/.bin/copilot-review");
 
-if (isDirectExecution) {
+if (isEntryPoint) {
   main().catch((err) => {
     process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
