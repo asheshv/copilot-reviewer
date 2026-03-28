@@ -186,15 +186,14 @@ export async function handleReview(params: Record<string, unknown>): Promise<Cal
       },
     ];
 
-    const usageParts = [
-      result.usage
-        ? `Token usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens`
-        : null,
-      `Model: ${result.model}`,
-      `Files reviewed: ${result.diff.stats.filesChanged}`,
-    ].filter(Boolean).join(" | ");
+    const usageParts: string[] = [];
+    if (result.usage) {
+      usageParts.push(`Token usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens`);
+    }
+    usageParts.push(`Model: ${result.model}`);
+    usageParts.push(`Files reviewed: ${result.diff.stats.filesChanged}`);
 
-    contentBlocks.push({ type: "text", text: usageParts });
+    contentBlocks.push({ type: "text", text: usageParts.join(" | ") });
 
     return { content: contentBlocks };
   } catch (err) {

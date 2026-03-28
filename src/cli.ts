@@ -185,6 +185,7 @@ export async function handleReview(
         process.stdout.write("\n");
       }
 
+      // result.usage is populated after the stream is fully consumed (above)
       debug(verbose, `Streaming complete, model=${result.model}`);
       if (result.usage) {
         process.stderr.write(`\nToken usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);

@@ -285,7 +285,7 @@ export class ModelManager {
       throw new ClientError(
         "invalid_response",
         `Model '${raw.id}' has no valid endpoints`,
-        false,
+        true, // retryable — API may intermittently return incomplete model data
       );
     }
 
