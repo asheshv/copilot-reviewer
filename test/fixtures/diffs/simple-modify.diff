@@ -1,0 +1,12 @@
+diff --git a/src/app.ts b/src/app.ts
+index 1234567..89abcde 100644
+--- a/src/app.ts
++++ b/src/app.ts
+@@ -1,5 +1,7 @@
+ export function hello() {
+-  console.log("Hello");
++  console.log("Hello, World!");
++  console.log("Welcome to the app");
+ }
+
+ export function goodbye() {
