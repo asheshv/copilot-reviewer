@@ -72,7 +72,7 @@ export class ModelManager {
       );
     }
 
-    const json = await response.json();
+    const json = (await response.json()) as any;
     const rawModels = json.data as RawModelData[];
 
     // Filter to chat-capable, user-selectable models
@@ -134,7 +134,7 @@ export class ModelManager {
       );
     }
 
-    const json = await response.json();
+    const json = (await response.json()) as any;
 
     if (!json.selected_model || typeof json.selected_model !== "string") {
       throw new ModelError(
