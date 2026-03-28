@@ -183,8 +183,8 @@ describe("collectDiff", () => {
         status: "modified",
       });
 
-      // Binary diff section should be excluded from raw
-      expect(result.raw).not.toContain("Binary files");
+      // Binary file markers preserved in raw per spec
+      expect(result.raw).toContain("Binary files");
       expect(result.raw).toContain("src/app.ts");
     });
 
@@ -251,13 +251,10 @@ describe("collectDiff", () => {
         callback(null, { stdout: fixture, stderr: "" });
       });
 
-      const result = await collectDiff({
-        mode: "unstaged",
-        ignorePaths: ["src/*.ts"],
-      });
-
-      expect(result.files).toHaveLength(0);
-      expect(result.raw).toBe("");
+      // When all files are filtered out, throws empty_diff
+      await expect(
+        collectDiff({ mode: "unstaged", ignorePaths: ["src/*.ts"] })
+      ).rejects.toMatchObject({ code: "empty_diff" });
     });
   });
 

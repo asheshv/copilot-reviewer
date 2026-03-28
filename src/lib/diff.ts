@@ -86,9 +86,9 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
     // Handle command not found
     if (err.code === "ENOENT") {
       if (command === "git") {
-        throw new DiffError("git_not_installed", "git command not found. Please install git.", false, err);
+        throw new DiffError("git_not_installed", "git is not installed or not in PATH. Install git: https://git-scm.com/", false, err);
       } else if (command === "gh") {
-        throw new DiffError("gh_not_installed", "gh command not found. Please install GitHub CLI.", false, err);
+        throw new DiffError("gh_not_installed", "PR mode requires the GitHub CLI (gh). Install: https://cli.github.com/", false, err);
       } else {
         // Should never happen with current modes, but handle defensively
         throw new DiffError("git_not_installed", `Command not found: ${command}`, false, err);
@@ -100,44 +100,46 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
     stderr = err.stderr || "";
   }
 
-  // Check for git errors in stderr
-  if (stderr) {
+  // Only check stderr for error patterns if command failed (non-zero exit)
+  // Git writes warnings to stderr even on success — don't treat those as errors
+  if (stderr && !stdout) {
     const stderrLower = stderr.toLowerCase();
 
     if (stderrLower.includes("not a git repository")) {
-      throw new DiffError("not_git_repo", "Current directory is not a git repository", false);
+      throw new DiffError("not_git_repo", "Not inside a git repository. Run from a git project directory.", false);
     }
 
     if (stderrLower.includes("no pull requests found")) {
-      throw new DiffError("pr_not_found", `Pull request #${pr} not found`, false);
+      throw new DiffError("pr_not_found", `Pull request #${pr} not found.`, false);
     }
 
     // Check for unknown revision errors
     if (stderrLower.includes("unknown revision")) {
-      // Detect specific patterns
       if (mode === "local" && stderrLower.includes("head")) {
-        throw new DiffError("no_commits", "Repository has no commits yet", false);
+        throw new DiffError("no_commits", "No commits in this repository yet. Make an initial commit before reviewing changes.", false);
       }
 
       if (mode === "commits" && stderrLower.includes(`head~${count}`)) {
         throw new DiffError(
           "insufficient_history",
-          `Insufficient commit history for HEAD~${count}. Repository may be a shallow clone.`,
+          `Not enough commit history for \`commits ${count}\`. This may be a shallow clone. Fetch more history with \`git fetch --unshallow\`.`,
           false
         );
       }
 
       if (mode === "branch" && base && stderrLower.includes(base.toLowerCase())) {
-        throw new DiffError("base_not_found", `Base branch '${base}' not found`, false);
+        throw new DiffError("base_not_found", `Base branch '${base}' not found.`, false);
       }
 
-      throw new DiffError("invalid_ref", `Invalid git reference: ${stderr}`, false);
+      throw new DiffError("invalid_ref", `Reference not found. Check that both refs in the range exist. Git error: ${stderr.trim()}`, false);
     }
   }
 
   // Check if diff is empty
   if (!stdout || stdout.trim().length === 0) {
-    throw new DiffError("empty_diff", "No changes found in diff", false);
+    const modeHint = mode === "staged" ? " Did you mean 'unstaged' or 'local'?" :
+                     mode === "unstaged" ? " Did you mean 'staged' or 'local'?" : "";
+    throw new DiffError("empty_diff", `No changes found for mode '${mode}'.${modeHint}`, false);
   }
 
   // Check size limit
@@ -152,13 +154,18 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
   if (stdout.length > maxSize) {
     throw new DiffError(
       "diff_too_large",
-      `Diff size (${stdout.length} bytes) exceeds maximum (${maxSize} bytes)`,
+      `Diff is too large (${stdout.length} bytes, max ${maxSize} bytes). Use ignorePaths, a smaller diff mode, or increase COPILOT_REVIEW_MAX_DIFF_SIZE.`,
       false
     );
   }
 
   // Parse diff
   const { files, raw } = parseDiff(stdout, ignorePaths);
+
+  // Check if all files were filtered out
+  if (files.length === 0) {
+    throw new DiffError("empty_diff", `No changes found after applying ignore patterns for mode '${mode}'.`, false);
+  }
 
   // Calculate stats
   const stats = {
@@ -256,13 +263,8 @@ function parseDiff(
 
     if (!shouldIgnore) {
       files.push(fileChange);
-
-      // For binary files, exclude from raw
-      if (isBinary) {
-        // Skip this section in raw output
-      } else {
-        sections.push(section);
-      }
+      // Include all sections in raw (binary "Binary files ... differ" markers preserved per spec)
+      sections.push(section);
     }
   }
 
