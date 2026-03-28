@@ -5,10 +5,11 @@ Review code changes using GitHub Copilot — CLI + MCP server for any AI agent.
 ## Installation
 
 ```bash
-npm install -g copilot-reviewer
+# Install globally from GitHub
+npm install -g github:asheshv/copilot-reviewer
 
 # Or use without installing:
-npx copilot-review --help
+npx github:asheshv/copilot-reviewer --help
 ```
 
 ## Quick Start
