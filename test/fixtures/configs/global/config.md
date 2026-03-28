@@ -1,0 +1,1 @@
+Also check for PL/pgSQL patterns.
