@@ -65,18 +65,11 @@ export async function review(
   // Step 6: Handle empty response
   if (!chatResponse.content) {
     warnings.push("Copilot returned no findings.");
-    return {
-      content: "",
-      model: chatResponse.model,
-      usage: chatResponse.usage,
-      diff,
-      warnings,
-    };
   }
 
-  // Step 7: Format output
+  // Step 7: Format output (always, even for empty content — formatter adds structure)
   const reviewResult: ReviewResult = {
-    content: chatResponse.content,
+    content: chatResponse.content || "",
     model: chatResponse.model,
     usage: chatResponse.usage,
     diff,
@@ -154,9 +147,7 @@ export async function reviewStream(
 async function collectDiffWithIgnorePaths(options: ReviewOptions): Promise<DiffResult> {
   const diffOptions = {
     ...options.diff,
-    ignorePaths: options.config.ignorePaths.length > 0
-      ? options.config.ignorePaths
-      : options.diff.ignorePaths,
+    ignorePaths: options.config.ignorePaths,
   };
   return collectDiff(diffOptions);
 }

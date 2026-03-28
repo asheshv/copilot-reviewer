@@ -94,7 +94,7 @@ describe("review()", () => {
     const result = await review(options, mockClient, mockModels);
 
     // Verify pipeline steps
-    expect(collectDiff).toHaveBeenCalledWith(options.diff);
+    expect(collectDiff).toHaveBeenCalledWith(expect.objectContaining({ mode: "unstaged", ignorePaths: mockConfig.ignorePaths }));
     expect(mockModels.validateModel).toHaveBeenCalledWith("gpt-4.1");
     expect(assembleUserMessage).toHaveBeenCalledWith(mockDiffResult);
     expect(mockClient.chat).toHaveBeenCalledWith(
@@ -265,8 +265,10 @@ describe("review()", () => {
         model: "gpt-4.1",
       };
 
-      await expect(review(options, mockClient, mockModels)).rejects.toThrow(ReviewError);
-      await expect(review(options, mockClient, mockModels)).rejects.toThrow("diff_too_large");
+      const err = await review(options, mockClient, mockModels).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ReviewError);
+      expect((err as ReviewError).code).toBe("diff_too_large");
+      expect((err as ReviewError).suggestion).toBe("Use ignorePaths or a larger-context model");
 
       // API should not be called
       expect(mockClient.chat).not.toHaveBeenCalled();
@@ -393,7 +395,8 @@ describe("review()", () => {
 
       const result = await review(options, mockClient, mockModels);
 
-      expect(result.content).toBe("");
+      // Content should be formatted (not raw empty string) — formatter adds structure
+      expect(result.content).toBeTruthy();
       expect(result.warnings).toContain("Copilot returned no findings.");
     });
   });
