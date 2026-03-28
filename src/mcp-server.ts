@@ -169,21 +169,27 @@ export async function handleReview(params: Record<string, unknown>): Promise<Cal
     const result = await review(reviewOptions, client, models);
 
     return {
-      content: [{
-        type: "text",
-        text: JSON.stringify({
-          content: result.content,
-          model: result.model,
-          usage: result.usage,
-          diff: {
-            filesChanged: result.diff.stats.filesChanged,
-            insertions: result.diff.stats.insertions,
-            deletions: result.diff.stats.deletions,
-            files: result.diff.files.map((f) => ({ path: f.path, status: f.status })),
-          },
-          warnings: result.warnings,
-        }),
-      }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            content: result.content,
+            model: result.model,
+            usage: result.usage,
+            diff: {
+              filesChanged: result.diff.stats.filesChanged,
+              insertions: result.diff.stats.insertions,
+              deletions: result.diff.stats.deletions,
+              files: result.diff.files.map((f) => ({ path: f.path, status: f.status })),
+            },
+            warnings: result.warnings,
+          }),
+        },
+        {
+          type: "text",
+          text: `Token usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model} | Files reviewed: ${result.diff.stats.filesChanged}`,
+        },
+      ],
     };
   } catch (err) {
     return mapErrorToToolResult(err);

@@ -120,21 +120,27 @@ export async function reviewStream(
   const useResponsesApi = modelInfo.endpoints.includes("/responses");
   const rawStream = client.chatStream(request, useResponsesApi);
 
-  // Convert StreamChunk to plain text strings
+  const result: ReviewStreamResult = {
+    stream: undefined as unknown as AsyncIterable<string>, // set below
+    warnings,
+    diff,
+    model: modelInfo.id,
+  };
+
+  // Convert StreamChunk to plain text strings, capturing usage from the "done" chunk
   async function* textStream(): AsyncIterable<string> {
     for await (const chunk of rawStream) {
       if ((chunk.type === "content" || chunk.type === "reasoning") && chunk.text) {
         yield chunk.text;
       }
+      if (chunk.type === "done" && chunk.usage) {
+        result.usage = chunk.usage;
+      }
     }
   }
 
-  return {
-    stream: textStream(),
-    warnings,
-    diff,
-    model: modelInfo.id,
-  };
+  result.stream = textStream();
+  return result;
 }
 
 // ============================================================================

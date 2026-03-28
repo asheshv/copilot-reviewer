@@ -182,7 +182,7 @@ describe("MCP Server", () => {
       const result = await handleReview({ mode: "staged" });
 
       expect(result.isError).toBeUndefined();
-      expect(result.content).toHaveLength(1);
+      expect(result.content).toHaveLength(2);
       expect(result.content[0].type).toBe("text");
 
       const parsed = JSON.parse(result.content[0].text);
@@ -194,6 +194,12 @@ describe("MCP Server", () => {
       expect(parsed.diff.deletions).toBe(2);
       expect(parsed.diff.files).toEqual([{ path: "src/foo.ts", status: "modified" }]);
       expect(parsed.warnings).toEqual([]);
+
+      // Second content block: human-readable usage summary
+      expect(result.content[1].type).toBe("text");
+      expect(result.content[1].text).toContain("Token usage: 500 tokens");
+      expect(result.content[1].text).toContain("Model: gpt-4.1");
+      expect(result.content[1].text).toContain("Files reviewed: 1");
     });
 
     it("maps tool parameters to ReviewOptions correctly", async () => {

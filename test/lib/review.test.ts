@@ -609,6 +609,48 @@ describe("reviewStream()", () => {
     );
   });
 
+  it("captures usage from done chunk after stream is consumed", async () => {
+    async function* mockStream() {
+      yield { type: "content", text: "Finding" } as StreamChunk;
+      yield { type: "done", usage: { totalTokens: 42 }, model: "gpt-4.1" } as StreamChunk;
+    }
+
+    mockClient.chatStream.mockReturnValue(mockStream());
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: mockConfig,
+      model: "gpt-4.1",
+    };
+
+    const result = await reviewStream(options, mockClient, mockModels);
+    expect(result.usage).toBeUndefined(); // not yet consumed
+
+    for await (const _ of result.stream) { /* drain */ }
+
+    expect(result.usage).toEqual({ totalTokens: 42 });
+  });
+
+  it("usage remains undefined when done chunk has no usage", async () => {
+    async function* mockStream() {
+      yield { type: "content", text: "Finding" } as StreamChunk;
+      yield { type: "done" } as StreamChunk;
+    }
+
+    mockClient.chatStream.mockReturnValue(mockStream());
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: mockConfig,
+      model: "gpt-4.1",
+    };
+
+    const result = await reviewStream(options, mockClient, mockModels);
+    for await (const _ of result.stream) { /* drain */ }
+
+    expect(result.usage).toBeUndefined();
+  });
+
   it("uses Responses API when model supports it", async () => {
     const responsesModel: ModelInfo = {
       ...mockModelInfo,

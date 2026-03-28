@@ -307,6 +307,8 @@ export interface ReviewStreamResult {
   warnings: string[];
   diff: DiffResult;
   model: string;
+  /** Populated after the stream has been fully consumed. */
+  usage?: { totalTokens: number };
 }
 
 // ============================================================================

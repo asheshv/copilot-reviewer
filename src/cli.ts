@@ -186,6 +186,9 @@ export async function handleReview(
       }
 
       debug(verbose, `Streaming complete, model=${result.model}`);
+      if (result.usage) {
+        process.stderr.write(`\nToken usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);
+      }
       return detectHighSeverity(fullContent) ? EXIT_CODES.HIGH_SEVERITY : EXIT_CODES.SUCCESS;
     } else {
       progress("Requesting review... ");
@@ -199,6 +202,7 @@ export async function handleReview(
       }
 
       debug(verbose, `Review complete, model=${result.model}, tokens=${result.usage.totalTokens}`);
+      process.stderr.write(`Token usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);
       process.stdout.write(result.content + "\n");
 
       return detectHighSeverity(result.content) ? EXIT_CODES.HIGH_SEVERITY : EXIT_CODES.SUCCESS;
