@@ -105,7 +105,7 @@ export class ModelManager {
 
     // Filter to chat-capable, user-selectable models
     let filtered = rawModels.filter(
-      (m) => m.capabilities?.type === "chat" && m.model_picker_enabled
+      (m) => m.capabilities?.type === "chat" && m.model_picker_enabled === true
     );
 
     // Auto-enable disabled models
@@ -114,8 +114,10 @@ export class ModelManager {
     // Deduplicate by name, keeping highest version
     const deduplicated = this._deduplicateByVersion(filtered);
 
-    // Transform to ModelInfo
-    const models = deduplicated.map((m) => this._transformToModelInfo(m));
+    // Transform to ModelInfo, filtering out models with missing critical data
+    const models = deduplicated
+      .map((m) => this._transformToModelInfo(m))
+      .filter((m) => m.maxPromptTokens > 0 && m.maxOutputTokens > 0);
 
     // Cache results
     this._cache = models;
@@ -264,18 +266,13 @@ export class ModelManager {
    * Transform raw model data to ModelInfo.
    */
   private _transformToModelInfo(raw: RawModelData): ModelInfo {
-    // Resolve endpoints: prefer "endpoints", fall back to "supported_endpoints"
+    // Resolve endpoints: prefer "endpoints" (primary API field),
+    // fall back to "supported_endpoints" (observed in some API responses)
     const endpoints = raw.endpoints ?? raw.supported_endpoints ?? [];
-    if (endpoints.length === 0) {
-      console.warn(`Model ${raw.id} has no endpoints defined; may be non-functional`);
-    }
 
-    // Validate critical capability limits — 0 means unusable
+    // Token limits — 0 means API didn't provide them (model will be filtered out by caller)
     const maxPromptTokens = raw.capabilities?.limits?.max_prompt_tokens ?? 0;
     const maxOutputTokens = raw.capabilities?.limits?.max_output_tokens ?? 0;
-    if (maxPromptTokens === 0 || maxOutputTokens === 0) {
-      console.warn(`Model ${raw.id} has zero token limits (prompt=${maxPromptTokens}, output=${maxOutputTokens}); may be unusable`);
-    }
 
     return {
       id: raw.id,

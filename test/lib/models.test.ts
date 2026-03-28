@@ -378,6 +378,43 @@ describe("ModelManager", () => {
       expect(models[0].maxOutputTokens).toBe(1000);
     });
 
+    it("filters out models with completely missing capabilities (zero tokens)", async () => {
+      const noCapsResponse = {
+        data: [
+          {
+            id: "no-caps",
+            name: "No Caps",
+            version: "2024-01-01",
+            model_picker_enabled: true,
+            // No capabilities at all — will get 0 tokens, filtered out
+          },
+          {
+            id: "valid-model",
+            name: "Valid",
+            version: "2024-01-01",
+            model_picker_enabled: true,
+            capabilities: {
+              type: "chat",
+              limits: { max_prompt_tokens: 8000, max_output_tokens: 2000 },
+            },
+          },
+        ],
+      };
+
+      server.use(
+        http.get("https://api.githubcopilot.com/models", () => {
+          return HttpResponse.json(noCapsResponse);
+        })
+      );
+
+      const manager = new ModelManager(authProvider);
+      const models = await manager.listModels();
+
+      // Model without capabilities is filtered out (0 token limits)
+      expect(models).toHaveLength(1);
+      expect(models[0].id).toBe("valid-model");
+    });
+
     it("uses supported_endpoints when endpoints is absent", async () => {
       const altResponse = {
         data: [
