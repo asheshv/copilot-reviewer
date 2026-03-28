@@ -9,14 +9,14 @@ const DEFAULT_TOKENIZER = "o200k_base"; // Fallback for API responses missing to
 
 /**
  * Raw model data from the API.
- * All fields except id/name/version/model_picker_enabled are optional —
+ * All fields except id/name/version are optional —
  * the undocumented API may omit them.
  */
 interface RawModelData {
   id: string;
   name: string;
   version: string;
-  model_picker_enabled: boolean;
+  model_picker_enabled?: boolean;
   capabilities?: {
     type: string;
     limits?: {
@@ -103,10 +103,14 @@ export class ModelManager {
     }
     const rawModels = json.data as RawModelData[];
 
-    // Filter to chat-capable, user-selectable models
-    let filtered = rawModels.filter(
-      (m) => m.capabilities?.type === "chat" && m.model_picker_enabled === true
-    );
+    // Filter to chat-capable, user-selectable models with valid token limits
+    let filtered = rawModels.filter((m) => {
+      const isChat = m.capabilities?.type === "chat";
+      const isSelectable = (m.model_picker_enabled ?? false) === true;
+      const hasTokenLimits = (m.capabilities?.limits?.max_prompt_tokens ?? 0) > 0
+        && (m.capabilities?.limits?.max_output_tokens ?? 0) > 0;
+      return isChat && isSelectable && hasTokenLimits;
+    });
 
     // Auto-enable disabled models
     await this._enableDisabledModels(filtered);
@@ -114,10 +118,10 @@ export class ModelManager {
     // Deduplicate by name, keeping highest version
     const deduplicated = this._deduplicateByVersion(filtered);
 
-    // Transform to ModelInfo, filtering out models with missing critical data
+    // Transform to ModelInfo, filtering out models with no usable endpoints
     const models = deduplicated
       .map((m) => this._transformToModelInfo(m))
-      .filter((m) => m.maxPromptTokens > 0 && m.maxOutputTokens > 0);
+      .filter((m) => m.endpoints.length > 0);
 
     // Cache results
     this._cache = models;
@@ -266,11 +270,20 @@ export class ModelManager {
    * Transform raw model data to ModelInfo.
    */
   private _transformToModelInfo(raw: RawModelData): ModelInfo {
+    // Validate required fields
+    if (!raw.id || !raw.name) {
+      throw new ClientError(
+        "invalid_response",
+        `Model missing required fields: id=${raw.id}, name=${raw.name}`,
+        false
+      );
+    }
+
     // Resolve endpoints: prefer "endpoints" (primary API field),
-    // fall back to "supported_endpoints" (observed in some API responses)
+    // fall back to "supported_endpoints" (observed in some API responses).
+    // Both may exist — "endpoints" takes precedence as it appears in official docs.
     const endpoints = raw.endpoints ?? raw.supported_endpoints ?? [];
 
-    // Token limits — 0 means API didn't provide them (model will be filtered out by caller)
     const maxPromptTokens = raw.capabilities?.limits?.max_prompt_tokens ?? 0;
     const maxOutputTokens = raw.capabilities?.limits?.max_output_tokens ?? 0;
 
