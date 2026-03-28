@@ -191,7 +191,8 @@ async function resolvePrompt(value: string, configDir: string): Promise<string> 
     const resolved = resolve(absolutePath);
 
     // Security: prevent path traversal — resolved path must stay within config directory
-    if (!resolved.startsWith(resolve(configDir))) {
+    const configDirResolved = resolve(configDir) + "/";
+    if (!resolved.startsWith(configDirResolved)) {
       throw new ConfigError(
         "prompt_not_found",
         `Prompt path must be within config directory: ${value}`,
