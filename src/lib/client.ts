@@ -282,7 +282,7 @@ export class CopilotClient {
     }
 
     const message = choice.message;
-    if (!message?.content) {
+    if (message?.content == null) {
       throw new ClientError(
         "invalid_response",
         "Missing message.content in response",

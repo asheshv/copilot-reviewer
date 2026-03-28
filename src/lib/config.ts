@@ -174,14 +174,24 @@ async function loadConfigLayer(
  * Resolve a prompt value: inline text or file path.
  */
 async function resolvePrompt(value: string, configDir: string): Promise<string> {
-  // Heuristic: if ends with .md and file exists, treat as path
+  // Security: absolute paths are NEVER allowed in prompt field
+  // (prevents reading arbitrary files via malicious .copilot-review/config.json committed to a repo)
+  if (isAbsolute(value)) {
+    throw new ConfigError(
+      "prompt_not_found",
+      `Absolute paths are not allowed in prompt field for security. Use a relative path within the config directory: ${value}`,
+      value,
+      false
+    );
+  }
+
+  // Heuristic: if ends with .md and file exists, treat as relative file path
   if (value.endsWith(".md")) {
-    const absolutePath = isAbsolute(value) ? value : join(configDir, value);
+    const absolutePath = join(configDir, value);
     const resolved = resolve(absolutePath);
 
-    // Security: prevent path traversal for relative paths
-    // Relative paths must resolve within the config directory
-    if (!isAbsolute(value) && !resolved.startsWith(resolve(configDir))) {
+    // Security: prevent path traversal — resolved path must stay within config directory
+    if (!resolved.startsWith(resolve(configDir))) {
       throw new ConfigError(
         "prompt_not_found",
         `Prompt path must be within config directory: ${value}`,
@@ -201,17 +211,6 @@ async function resolvePrompt(value: string, configDir: string): Promise<string> 
         false
       );
     }
-  }
-
-  // Absolute paths are NOT allowed in prompt field (security: prevents reading arbitrary files
-  // via malicious .copilot-review/config.json committed to a repo)
-  if (isAbsolute(value)) {
-    throw new ConfigError(
-      "prompt_not_found",
-      `Absolute paths are not allowed in prompt field for security. Use a relative path within the config directory: ${value}`,
-      value,
-      false
-    );
   }
 
   // Otherwise, treat as inline text

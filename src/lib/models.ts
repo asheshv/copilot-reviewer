@@ -57,12 +57,27 @@ export class ModelManager {
       return this._cache;
     }
 
-    // Fetch models from API
+    // Fetch models from API (30s timeout)
     const headers = await this._buildHeaders();
-    const response = await fetch(`${BASE_URL}/models`, {
-      method: "GET",
-      headers,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await fetch(`${BASE_URL}/models`, {
+        method: "GET",
+        headers,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      throw new ClientError(
+        "timeout",
+        `Network error fetching models: ${err instanceof Error ? err.message : String(err)}`,
+        true,
+        err instanceof Error ? err : undefined
+      );
+    }
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const err = new ClientError(

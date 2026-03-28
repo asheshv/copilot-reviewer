@@ -111,7 +111,7 @@ Or if using locally (not installed globally):
   "copilot-reviewer": {
     "type": "stdio",
     "command": "node",
-    "args": ["/absolute/path/to/copilot-reviewer/dist/mcp-server.js"]
+    "args": ["/absolute/path/to/copilot-reviewer/dist/cli.js", "--mcp"]
   }
 }
 ```
@@ -240,9 +240,11 @@ Complete structured output in a single JSON object:
 
 ```json
 {
-  "content": "### HIGH SQL Injection...",
-  "model": "gpt-4.1",
-  "usage": { "totalTokens": 1234 },
+  "review": {
+    "content": "### HIGH SQL Injection...",
+    "model": "gpt-4.1",
+    "usage": { "totalTokens": 1234 }
+  },
   "diff": {
     "filesChanged": 5,
     "insertions": 120,
@@ -251,7 +253,8 @@ Complete structured output in a single JSON object:
       { "path": "src/db.ts", "status": "modified" }
     ]
   },
-  "warnings": []
+  "warnings": [],
+  "exitCode": 1
 }
 ```
 
@@ -261,7 +264,7 @@ Use `--stream --format json` for newline-delimited JSON stream:
 
 ```bash
 copilot-review --stream --format json | while read line; do
-  echo "$line" | jq -r '.delta // empty'
+  echo "$line" | jq -r '.text // empty'
 done
 ```
 
