@@ -281,6 +281,13 @@ export class ModelManager {
     // Resolve endpoints: prefer "endpoints" over "supported_endpoints".
     // Both fields may exist; "endpoints" takes precedence per API documentation.
     const endpoints = raw.endpoints ?? raw.supported_endpoints ?? [];
+    if (endpoints.length === 0) {
+      throw new ClientError(
+        "invalid_response",
+        `Model '${raw.id}' has no valid endpoints`,
+        false,
+      );
+    }
 
     const maxPromptTokens = raw.capabilities?.limits?.max_prompt_tokens ?? 0;
     const maxOutputTokens = raw.capabilities?.limits?.max_output_tokens ?? 0;

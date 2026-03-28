@@ -201,8 +201,10 @@ export async function handleReview(
         }
       }
 
-      debug(verbose, `Review complete, model=${result.model}, tokens=${result.usage.totalTokens}`);
-      process.stderr.write(`Token usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);
+      debug(verbose, `Review complete, model=${result.model}, tokens=${result.usage?.totalTokens ?? "unknown"}`);
+      if (result.usage) {
+        process.stderr.write(`Token usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);
+      }
       process.stdout.write(result.content + "\n");
 
       return detectHighSeverity(result.content) ? EXIT_CODES.HIGH_SEVERITY : EXIT_CODES.SUCCESS;
