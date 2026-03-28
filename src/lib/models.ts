@@ -103,13 +103,14 @@ export class ModelManager {
     }
     const rawModels = json.data as RawModelData[];
 
-    // Filter to chat-capable, user-selectable models with valid token limits
+    // Filter to chat-capable, user-selectable models with valid limits and endpoints
     let filtered = rawModels.filter((m) => {
       const isChat = m.capabilities?.type === "chat";
-      const isSelectable = (m.model_picker_enabled ?? false) === true;
+      const isSelectable = m.model_picker_enabled === true;
       const hasTokenLimits = (m.capabilities?.limits?.max_prompt_tokens ?? 0) > 0
         && (m.capabilities?.limits?.max_output_tokens ?? 0) > 0;
-      return isChat && isSelectable && hasTokenLimits;
+      const hasEndpoints = (m.endpoints ?? m.supported_endpoints ?? []).length > 0;
+      return isChat && isSelectable && hasTokenLimits && hasEndpoints;
     });
 
     // Auto-enable disabled models
@@ -118,10 +119,8 @@ export class ModelManager {
     // Deduplicate by name, keeping highest version
     const deduplicated = this._deduplicateByVersion(filtered);
 
-    // Transform to ModelInfo, filtering out models with no usable endpoints
-    const models = deduplicated
-      .map((m) => this._transformToModelInfo(m))
-      .filter((m) => m.endpoints.length > 0);
+    // Transform to ModelInfo
+    const models = deduplicated.map((m) => this._transformToModelInfo(m));
 
     // Cache results
     this._cache = models;
@@ -279,9 +278,8 @@ export class ModelManager {
       );
     }
 
-    // Resolve endpoints: prefer "endpoints" (primary API field),
-    // fall back to "supported_endpoints" (observed in some API responses).
-    // Both may exist — "endpoints" takes precedence as it appears in official docs.
+    // Resolve endpoints: prefer "endpoints" over "supported_endpoints".
+    // Both fields may exist; "endpoints" takes precedence per API documentation.
     const endpoints = raw.endpoints ?? raw.supported_endpoints ?? [];
 
     const maxPromptTokens = raw.capabilities?.limits?.max_prompt_tokens ?? 0;
