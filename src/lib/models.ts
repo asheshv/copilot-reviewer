@@ -1,7 +1,7 @@
 // src/lib/models.ts
 
 import type { AuthProvider, ModelInfo } from "./types.js";
-import { ModelError } from "./types.js";
+import { ModelError, ClientError } from "./types.js";
 
 const BASE_URL = "https://api.githubcopilot.com";
 const CACHE_TTL_MS = 300_000; // 5 minutes
@@ -65,14 +65,23 @@ export class ModelManager {
     });
 
     if (!response.ok) {
-      throw new ModelError(
-        "model_list_failed",
-        `Failed to fetch models: ${response.status} ${response.statusText}`,
+      const err = new ClientError(
+        "request_failed",
+        `Failed to fetch models from Copilot API (${response.status}). Check your network connection and authentication.`,
         false
       );
+      err.status = response.status;
+      throw err;
     }
 
     const json = (await response.json()) as any;
+    if (!json.data || !Array.isArray(json.data)) {
+      throw new ClientError(
+        "invalid_response",
+        "Invalid response from /models endpoint: missing data array.",
+        false
+      );
+    }
     const rawModels = json.data as RawModelData[];
 
     // Filter to chat-capable, user-selectable models
