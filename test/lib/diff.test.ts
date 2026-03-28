@@ -408,6 +408,33 @@ describe("collectDiff", () => {
         code: "diff_too_large",
       });
     });
+
+    it("falls back to default size limit when env var is invalid", async () => {
+      process.env.COPILOT_REVIEW_MAX_DIFF_SIZE = "invalid";
+      const largeDiff = "a".repeat(11 * 1024 * 1024); // 11 MB (exceeds default 10MB)
+      mockExecFile.mockImplementation((cmd, args, callback: any) => {
+        callback(null, { stdout: largeDiff, stderr: "" });
+      });
+
+      await expect(collectDiff({ mode: "unstaged" })).rejects.toMatchObject({
+        name: "DiffError",
+        code: "diff_too_large",
+      });
+    });
+
+    it("falls back to default size limit when env var is negative", async () => {
+      process.env.COPILOT_REVIEW_MAX_DIFF_SIZE = "-100";
+      const largeDiff = "a".repeat(11 * 1024 * 1024); // 11 MB (exceeds default 10MB)
+      mockExecFile.mockImplementation((cmd, args, callback: any) => {
+        callback(null, { stdout: largeDiff, stderr: "" });
+      });
+
+      // Should throw diff_too_large because we fall back to default 10MB limit
+      await expect(collectDiff({ mode: "unstaged" })).rejects.toMatchObject({
+        name: "DiffError",
+        code: "diff_too_large",
+      });
+    });
   });
 
   describe("security", () => {

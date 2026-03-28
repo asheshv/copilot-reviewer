@@ -89,6 +89,9 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
         throw new DiffError("git_not_installed", "git command not found. Please install git.", false, err);
       } else if (command === "gh") {
         throw new DiffError("gh_not_installed", "gh command not found. Please install GitHub CLI.", false, err);
+      } else {
+        // Should never happen with current modes, but handle defensively
+        throw new DiffError("git_not_installed", `Command not found: ${command}`, false, err);
       }
     }
 
@@ -112,11 +115,11 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
     // Check for unknown revision errors
     if (stderrLower.includes("unknown revision")) {
       // Detect specific patterns
-      if (mode === "local" && stderr.includes("HEAD")) {
+      if (mode === "local" && stderrLower.includes("head")) {
         throw new DiffError("no_commits", "Repository has no commits yet", false);
       }
 
-      if (mode === "commits" && stderr.includes(`HEAD~${count}`)) {
+      if (mode === "commits" && stderrLower.includes(`head~${count}`)) {
         throw new DiffError(
           "insufficient_history",
           `Insufficient commit history for HEAD~${count}. Repository may be a shallow clone.`,
@@ -124,7 +127,7 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
         );
       }
 
-      if (mode === "branch" && base && stderr.includes(base)) {
+      if (mode === "branch" && base && stderrLower.includes(base.toLowerCase())) {
         throw new DiffError("base_not_found", `Base branch '${base}' not found`, false);
       }
 
@@ -138,9 +141,13 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
   }
 
   // Check size limit
-  const maxSize = process.env.COPILOT_REVIEW_MAX_DIFF_SIZE
-    ? parseInt(process.env.COPILOT_REVIEW_MAX_DIFF_SIZE, 10)
-    : DEFAULT_MAX_DIFF_SIZE;
+  let maxSize = DEFAULT_MAX_DIFF_SIZE;
+  if (process.env.COPILOT_REVIEW_MAX_DIFF_SIZE) {
+    const parsed = parseInt(process.env.COPILOT_REVIEW_MAX_DIFF_SIZE, 10);
+    if (!isNaN(parsed) && parsed > 0) {
+      maxSize = parsed;
+    }
+  }
 
   if (stdout.length > maxSize) {
     throw new DiffError(
@@ -196,7 +203,7 @@ function parseDiff(
     let oldPath: string | undefined;
 
     // Check for binary file
-    const isBinary = section.includes("Binary files");
+    const isBinary = /^Binary files .* differ$/m.test(section);
 
     if (section.includes("new file mode")) {
       status = "added";
