@@ -59,7 +59,7 @@ export async function review(
   };
 
   // Step 5: Call API
-  const useResponsesApi = modelInfo.endpoints?.includes("/responses") ?? false;
+  const useResponsesApi = modelInfo.endpoints.includes("/responses");
   const chatResponse = await client.chat(request, useResponsesApi);
 
   // Step 6: Handle empty response
@@ -117,7 +117,7 @@ export async function reviewStream(
   };
 
   // Step 5: Call streaming API
-  const useResponsesApi = modelInfo.endpoints?.includes("/responses") ?? false;
+  const useResponsesApi = modelInfo.endpoints.includes("/responses");
   const rawStream = client.chatStream(request, useResponsesApi);
 
   // Convert StreamChunk to plain text strings

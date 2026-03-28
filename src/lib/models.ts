@@ -21,10 +21,11 @@ interface RawModelData {
       max_output_tokens: number;
     };
   };
-  endpoints: string[];
-  streaming: boolean;
-  tool_calls: boolean;
-  tokenizer: string;
+  endpoints?: string[];
+  supported_endpoints?: string[];
+  streaming?: boolean;
+  tool_calls?: boolean;
+  tokenizer?: string;
   policy?: {
     state: string;
   };
@@ -263,12 +264,13 @@ export class ModelManager {
     return {
       id: raw.id,
       name: raw.name,
-      endpoints: raw.endpoints,
-      streaming: raw.streaming,
-      toolCalls: raw.tool_calls,
-      maxPromptTokens: raw.capabilities.limits.max_prompt_tokens,
-      maxOutputTokens: raw.capabilities.limits.max_output_tokens,
-      tokenizer: raw.tokenizer,
+      // API may use "endpoints" or "supported_endpoints" — normalize to always-present array
+      endpoints: raw.endpoints ?? raw.supported_endpoints ?? [],
+      streaming: raw.streaming ?? false,
+      toolCalls: raw.tool_calls ?? false,
+      maxPromptTokens: raw.capabilities?.limits?.max_prompt_tokens ?? 0,
+      maxOutputTokens: raw.capabilities?.limits?.max_output_tokens ?? 0,
+      tokenizer: raw.tokenizer ?? "o200k_base",
     };
   }
 
