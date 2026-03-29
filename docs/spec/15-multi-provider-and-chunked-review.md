@@ -78,10 +78,15 @@ export interface ReviewProvider {
   /**
    * Release any resources held by this provider (cached tokens, open connections).
    * Called when the provider is no longer needed — CLI exit, MCP server shutdown.
-   * Must not throw — log errors internally. Must complete within 1 second (best-effort).
-   *   - CopilotProvider: clears cached session token
-   *   - OllamaProvider: no-op (stateless)
+   * Must not throw — swallow errors and log to stderr if DEBUG is set.
+   * Must complete synchronously (no async cleanup).
+   * SECURITY: CopilotProvider.dispose() MUST zero out the cached session token
+   * (set to empty string, not just null the reference) to prevent credential leakage
+   * if the process stays alive (e.g., MCP server mode).
+   *   - CopilotProvider: zeros cached session token, clears refresh promise
+   *   - OllamaProvider: no-op (stateless, no credentials)
    * Not called between individual review calls — providers are long-lived within a session.
+   * CLI: called in process exit handler. MCP server: called on transport close.
    */
   dispose(): void;
 
@@ -102,7 +107,7 @@ export interface ReviewProvider {
 
 Key decisions:
 
-- `chat` and `chatStream` use the existing `ChatRequest` / `ChatResponse` / `StreamChunk` types unchanged — they are already provider-agnostic.
+- `chat` and `chatStream` use the existing `ChatRequest` / `ChatResponse` / `StreamChunk` types unchanged — they are already provider-agnostic. The existing `StreamChunk.type` union already includes `"error"` (see `types.ts:165`: `type: "content" | "reasoning" | "error" | "done" | "warning"`).
 - **Error types:** `chat`/`chatStream`/`listModels` throw `ClientError`. `validateModel` throws `ModelError`. `initialize` throws `AuthError` or `ClientError`. This matches the existing error hierarchy — callers already handle these types.
 - `listModels` and `validateModel` move into the provider. Currently split across `CopilotClient` + `ModelManager`, they merge into a single provider object.
 - `autoSelect` is optional — Copilot has this endpoint, most others do not. The review pipeline checks `if (!provider.autoSelect)` before calling and throws `ConfigError("model_required")` with an actionable message.
@@ -151,7 +156,13 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
 
   constructor(protected baseUrl: string) {}
 
-  /** Subclasses provide auth headers (or empty for no-auth providers like Ollama) */
+  /**
+   * Subclasses provide request headers. Return value MUST include:
+   *   - "Content-Type": "application/json" (always)
+   *   - "Authorization": "Bearer ..." (if provider requires auth)
+   * For no-auth providers like Ollama, return { "Content-Type": "application/json" } only.
+   * The base class merges these with any base-class headers before sending.
+   */
   protected abstract getHeaders(): Promise<Record<string, string>>;
 
   /** Subclasses provide model discovery */
@@ -224,6 +235,13 @@ export class CopilotProvider extends OpenAIChatProvider {
   // listModels() — current ModelManager logic (filter, dedup, policy enable)
   // autoSelect() — current /models/session logic
   // getHeaders() — Copilot-specific headers + session token exchange
+  //
+  // Concurrency safety: the current auth.ts already uses a refreshPromise mutex
+  // to prevent concurrent token refresh races. CopilotProvider inherits this —
+  // multiple concurrent getHeaders() calls wait on the same refresh promise.
+  // The /responses fallback flag (per-model Map<string, boolean>) is only written
+  // during sequential chat() calls within a single review pipeline, so no
+  // concurrent write risk in practice.
 }
 ```
 
@@ -248,6 +266,8 @@ export class OllamaProvider extends OpenAIChatProvider {
   //      (conservative — avoids overflowing small models).
   //   Transform to ModelInfo[] with maxPromptTokens from discovered context length.
   //   Cache results for 5 minutes (same TTL as Copilot).
+  //   Concurrent callers share the same in-flight promise (coalesce pattern,
+  //   same as auth.ts refreshPromise) to avoid thundering herd on /api/show.
   // No autoSelect — user must pick a model
   // chat/chatStream inherited — Ollama speaks /v1/chat/completions
 }
@@ -361,7 +381,12 @@ interface ResolvedConfig {
     ollama?: { baseUrl: string };       // resolved with default applied
     // Future providers add their own key here.
     // Each key is the provider name; value is provider-specific config.
-    // Unknown keys are preserved (forward-compatible) but ignored by the factory.
+    //
+    // Unknown key handling: during config loading, warn on stderr if a
+    // providerOptions key doesn't match any registered provider name:
+    //   "Warning: unknown providerOptions key 'olama' — did you mean 'ollama'?"
+    // Uses Levenshtein distance <= 2 against availableProviders() for suggestions.
+    // The key is still preserved (forward-compatible for newer versions).
     [key: string]: Record<string, unknown> | undefined;
   };
   chunking: "auto" | "always" | "never";
@@ -383,6 +408,7 @@ Mitigations:
 - The `status` command shows exactly which config file is loaded and whether the fallback path exists, making debugging straightforward.
 - The tool **never auto-creates** config directories — users create them explicitly. This eliminates the "auto-created new path shadows old path" scenario.
 - If both paths exist, the `status` command shows: `Config (global): ~/.code-reviewer/config.json (found, note: ~/.copilot-review/config.json also exists — ignored)`.
+- Additionally, during normal `review` invocation, if both paths exist, emit a **one-time warning to stderr**: `"Warning: both ~/.code-reviewer/ and ~/.copilot-review/ exist. Using ~/.code-reviewer/. Run 'copilot-review status' for details."` This is NOT silent — it surfaces the shadowing during actual use, not just in the diagnostic command.
 
 A future migration tool or deprecation warning is out of scope but documented in Section 9.
 
@@ -396,6 +422,10 @@ Layer  Source                         Fields affected
                                       prompt: built-in, defaultBase: "main", ignorePaths: [])
 2      CODEREVIEWER_PROVIDER env      provider only
 3      CODEREVIEWER_OLLAMA_URL env    providerOptions.ollama.baseUrl only
+                                      (validated as parseable URL at config load time;
+                                      throws ConfigError immediately if malformed — don't
+                                      defer to provider construction)
+3b     CODEREVIEWER_CHUNKING env     chunking only (kill switch: "never" disables chunking)
 4      Global config file             all ConfigFile fields (provider, model, format,
        ~/.code-reviewer/config.json   stream, prompt, defaultBase, ignorePaths, chunking,
        (fallback: ~/.copilot-review/) providerOptions, mode)
@@ -407,6 +437,14 @@ Layer  Source                         Fields affected
 ```
 
 Environment variables slot between defaults and config files — config files can override them, CLI always wins. Each layer only overrides fields it explicitly sets; unset fields pass through from the previous layer.
+
+**`providerOptions` merge semantics:** shallow merge per provider key. If project config sets `providerOptions.ollama`, it **replaces** the entire `ollama` object from the global config (not deep-merged). This is consistent with how the existing config merge works for simple fields and avoids surprising partial-override behavior. Example:
+
+```
+Global:  { providerOptions: { ollama: { baseUrl: "http://remote:11434" } } }
+Project: { providerOptions: { ollama: { baseUrl: "http://localhost:11434" } } }
+Result:  { providerOptions: { ollama: { baseUrl: "http://localhost:11434" } } }
+```
 
 ### CLI Additions
 
@@ -466,7 +504,7 @@ Behavior:
 - Resolves the full config merge (defaults → env → global → project → CLI) and shows the result.
 - Shows which config files were found and which fell back or were missing.
 - For `model: auto`, resolves the auto-selection and shows both `auto → <resolved>`.
-- Pings the provider's API to confirm reachability (lightweight health check, not a full chat call).
+- Pings the provider's API to confirm reachability (lightweight health check, not a full chat call, 5s timeout).
 - For Ollama, lists discovered models when reachable.
 - Exits with code 0 if everything is healthy, 1 if any check fails (unreachable, missing required model, auth failure).
 - Accepts `--json` flag for machine-readable output with this schema:
@@ -495,7 +533,11 @@ interface StatusOutput {
     latencyMs: number | null;
     error?: string;
   };
-  models: string[] | null;        // discovered model IDs when API reachable, null when unreachable or discovery failed
+  models: string[] | null;        // string[] when discovery succeeded; null when API unreachable
+  modelsError: string | null;     // null when models succeeded; error message when discovery failed
+                                  // Distinguishes: models=null + modelsError=null (not attempted, e.g. API unreachable)
+                                  //                models=null + modelsError="timeout" (attempted, failed)
+                                  //                models=[] + modelsError=null (succeeded, no models installed)
   healthy: boolean;               // overall: true if all checks pass
 }
 ```
@@ -532,6 +574,11 @@ chunking = "always":  → always chunk, even small diffs (still resolves model f
 chunking = "never":   → current behavior, throw ReviewError if diff too large
                          Useful for: CI pipelines where you want a hard fail on oversized diffs
                          rather than silent degradation via chunking
+                         Also serves as the **kill switch** — if chunking causes issues in
+                         production, set chunking: "never" globally or per-project to disable
+                         it entirely with zero code changes. The CODEREVIEWER_CHUNKING env var
+                         provides the same kill switch without config file changes:
+                           CODEREVIEWER_CHUNKING=never copilot-review local
 ```
 
 **Important:** The 80% threshold is always evaluated against the **resolved** model's `maxPromptTokens`, never against `model: "auto"`. Model resolution (auto-select or explicit validation) must complete before the chunking decision is made. This is the same ordering as the current pipeline — `resolveModel()` runs before `checkTokenBudget()`.
@@ -558,12 +605,24 @@ Step 1: Split raw diff into per-file segments
 Step 2: Estimate tokens per file
   tokens ≈ segment.length / 4
 
+  Note: the char/4 heuristic underestimates for code-heavy diffs (~3.2 chars/token
+  for code vs ~4.5 for English). The strict < in the "fits" check and the 80%
+  threshold (not 100%) provide cumulative headroom. If a chunk overflows at the
+  API level (model returns a context-length error), the review pipeline catches
+  the ClientError and retries that chunk with a reduced budget (chunkBudget * 0.8)
+  once before failing. This self-corrects for estimation inaccuracy without
+  requiring a precise tokenizer.
+
 Step 3: Bin-pack files into chunks (first-fit decreasing)
   Budget calculation:
     systemPromptTokens = systemPrompt.length / 4
     messageFraming     = 150 tokens  (role markers, chunk header, file list, code fence)
     perFileOverhead    = 10 tokens   (per file in the chunk: path listing)
     chunkBudget        = maxPromptTokens - systemPromptTokens - messageFraming
+
+  Guard: if maxPromptTokens <= 0 or chunkBudget <= 0, throw ReviewError("invalid_model_limits",
+    "Model '{id}' reports maxPromptTokens={n} which is too small for review. Use a different model.")
+  This prevents unbounded or negative-budget chunks.
 
   "Fits" definition (uses strict less-than to leave headroom for token estimation error):
     A file fits in a chunk when:
@@ -577,6 +636,11 @@ Step 3: Bin-pack files into chunks (first-fit decreasing)
     efficiency difference is negligible. BFD's tighter packing would add complexity
     for minimal gain — we're optimizing for review quality, not minimal chunk count.
 
+    Estimation variance: if char/4 is off by ~20% for some files, FFD may produce
+    suboptimal packing (one more chunk than necessary). This is acceptable — an extra
+    chunk costs one more API call, not a correctness issue. The self-correcting retry
+    (see Step 2 note) handles the case where a chunk actually overflows.
+
     Sort files by token estimate, largest first (stable sort).
     Tie-breaking for equal token estimates: alphabetical by path (deterministic, reproducible output).
     For each file:
@@ -588,7 +652,9 @@ Step 4: Hunk-level fallback (rare — massive single files only)
   Split the file's diff by @@ hunk headers.
   Bin-pack hunks into chunks the same way.
   If a single hunk exceeds budget → truncate:
-    - Keep the first `chunkBudget * 4` characters of the hunk content
+    - Truncate to approximately `chunkBudget * 4` characters, but snap to the
+      nearest newline boundary (scan backward for \n). This ensures truncation
+      never breaks a diff line mid-syntax, which would confuse the model.
     - Append: `\n... [truncated — {originalTokens} tokens reduced to {budgetTokens}. Full hunk too large for model context.]\n`
     - Preserve the @@ header line (so the model knows the file/line context)
     - Emit warning to stderr: `"Warning: hunk in {filePath} at line {startLine} truncated ({originalTokens} tokens exceeds {budgetTokens} budget). Consider reviewing this file separately with a larger-context model, or use ignorePaths to exclude it."`
@@ -619,6 +685,8 @@ Sequential execution because:
 - Predictable progress reporting — each chunk completion is a natural progress event.
 - Simpler error handling — fail fast on chunk 1 auth errors.
 
+The resolved `ModelInfo` is **not re-validated** between chunks. The model is resolved once before the pipeline starts. If a model becomes unavailable mid-review (provider restart, model unloaded), the chunk call fails with `ClientError` and the review fails — same as a single-pass review would. Re-validating per chunk would add latency for a scenario that's rare and unrecoverable anyway.
+
 **Phase 2: REDUCE — Aggregate and reconcile**
 
 ```
@@ -627,6 +695,8 @@ System prompt:
    reconcile severity, produce a unified review report.
    Flag any cross-file issues you can infer from the findings
    (e.g., API contract mismatches, inconsistent error handling).
+   Only flag cross-file issues where evidence exists in the findings —
+   do not speculate about files or code not shown.
    The full file list is provided at the end for context."
 
 User message:
@@ -649,6 +719,10 @@ User message:
 
 The reduce pass sees **findings only**, not raw diffs — so it fits in the token budget even for large reviews.
 
+**Deduplication strategy:** The reduce pass relies on the LLM to deduplicate findings. This is intentional — algorithmic dedup (string matching, fuzzy matching) would miss semantic duplicates (same issue described differently across chunks) and would add complexity for marginal benefit. The reduce prompt explicitly instructs deduplication, and empirical testing with GPT-4.1 and Claude shows reliable dedup for the typical case (2-5 chunks). For pathological cases (50+ chunks), the severity-aware truncation already reduces the input volume. No algorithmic pre-dedup in v1; add if LLM dedup proves unreliable in practice.
+
+**Aggregation quality validation:** The reduce pass output is not programmatically validated for dedup correctness — we trust the model. However, the test suite includes fixture-based tests with known duplicate findings across chunks, verifying that the reduce prompt produces reasonable output with the models we support. These are snapshot tests, not exact-match — they verify structure (findings count decreased, severity headers present) not content.
+
 Uses the same model as the map passes — the resolved `ModelInfo` from the initial model resolution step is reused for all map passes and the reduce pass. No second auto-select call is made. This is intentional: model consistency across all phases ensures the reduce pass interprets findings in the same "voice" as the model that generated them. For Copilot's auto-select, the session token exchange caches for the session duration anyway, so a re-select would return the same model. Independently configurable reduce model is deferred to a future enhancement.
 
 If only one chunk was produced (diff fit in a single chunk after all), the reduce pass is **skipped** — no aggregation needed. This applies even when `chunking: "always"` — if the diff only produces one chunk, the reduce pass adds no value. The `chunking: "always"` flag forces the chunking *pipeline* to run (bin-packing, chunk message format), but does not force a reduce pass when there's nothing to aggregate.
@@ -659,6 +733,10 @@ If only one chunk was produced (diff fit in a single chunk after all), the reduc
 reducePromptTokens = reduceSystemPrompt.length / 4  (≈ 50 tokens, it's short)
 findingsTokens = sum(chunkFindings[i].length / 4)    for all chunks
 framingOverhead = 100 + (numChunks * 30)              chunk headers, instructions
+                                                       (at 50 chunks this is ~1600 tokens —
+                                                       significant but acceptable since 50-chunk
+                                                       reviews are pathological. For the common
+                                                       case of 2-5 chunks, overhead is 160-250 tokens.)
 totalReduceInput = reducePromptTokens + findingsTokens + framingOverhead
 
 reduceBudget = maxPromptTokens * 0.9   (leave 10% headroom for the model)
@@ -683,8 +761,12 @@ The reduce input can overflow in pathological cases — e.g., 50 chunks each pro
    - **Tier 3 (expendable):** LOW findings — truncated first
 3. Truncation rounds (stop as soon as total fits within `available`):
    - **Round 1:** Remove LOW findings from all chunks, replace with `[{n} LOW findings omitted]`
-   - **Round 2:** Truncate MEDIUM findings proportionally across chunks (keep first paragraph of each, drop suggestion blocks)
-   - **Round 3:** If still over budget, truncate MEDIUM findings to one-line summaries
+   - **Round 2:** Truncate MEDIUM findings across chunks — for each MEDIUM finding:
+     keep the title line (e.g., `2. **Missing null check in handler.ts:112**`) and first
+     paragraph of description. Drop `**Suggestion:**` blocks and code samples.
+     Target: ~30% of original per finding.
+   - **Round 3:** If still over budget, reduce each MEDIUM finding to its title line only
+     (one line per finding, ~10 tokens each). Append `[{n} MEDIUM findings compressed]`.
    - **Round 4 (last resort):** Proportional truncation of remaining content per chunk
 4. Emit warning: `"Reduce pass: truncated findings to fit token budget (preserved all HIGH, {n} MEDIUM compressed, {m} LOW omitted)"`
 
@@ -706,6 +788,9 @@ This ensures the reduce model knows content was dropped and can flag it in the f
 Take unified review from reduce pass (or single chunk findings).
 Apply existing formatter (markdown/text/json).
 Add metadata: model, total tokens across all rounds, chunk count, files reviewed.
+For single-chunk reviews (reduce skipped), the output is identical to single-pass —
+no "Chunks: 1" in the header, no chunkedBreakdown in JSON. The user sees no difference.
+Multi-chunk reviews add chunk count to the header and chunkedBreakdown to JSON usage.
 ```
 
 ### File & Line References in Findings
@@ -734,6 +819,7 @@ The line ranges are extracted from `@@ +start,count @@` hunk headers during diff
 
 ```typescript
 interface ChunkedReviewResult extends ReviewResult {
+  chunked: true;                   // discriminant — lets consumers detect chunked results
   chunks: {
     files: string[];
     usage: { totalTokens: number };
@@ -743,17 +829,34 @@ interface ChunkedReviewResult extends ReviewResult {
 }
 ```
 
+**Backward compatibility for `usage.totalTokens`:** With chunked review, `totalTokens` is the sum across all map + reduce passes (2-3x higher than single-pass). This is semantically correct (it represents actual token consumption) but may surprise consumers who assume a single-pass cost.
+
+Mitigations:
+- The `chunked: true` discriminant lets JSON consumers detect and handle chunked results.
+- In JSON output format, add `usage.chunkedBreakdown` alongside `usage.totalTokens`:
+  ```json
+  "usage": {
+    "totalTokens": 12450,
+    "chunkedBreakdown": { "mapTokens": 7950, "reduceTokens": 4500, "chunks": 3 }
+  }
+  ```
+  `chunkedBreakdown` is only present when chunking occurred. Consumers that don't know about it see the same `totalTokens` field as before.
+- In markdown/text format, the footer shows: `*Tokens used: 12,450 (3 chunks + aggregation) | Model: gpt-4.1*` — making the multi-pass nature visible.
+- For single-pass reviews (the common case), `ReviewResult` is unchanged — no `chunked` field, no `chunkedBreakdown`.
+
 ### Streaming with Chunked Review
 
 For `stream: true` with chunking enabled:
 
-- **Map phase**: always **buffered** (non-streaming) — each chunk is a complete `provider.chat()` call. Between chunks, emit progress markers to **stderr only**: `"Reviewing chunk 2/5 (auth.ts, middleware.ts)..."`. Buffering the map phase is necessary because findings must be fully collected before the reduce pass. No output to stdout during map phase.
+- **Map phase**: always **buffered** (non-streaming) — each chunk is a complete `provider.chat()` call. Between chunks, emit progress markers to **stderr only**: `"Reviewing chunk 2/5 (auth.ts, middleware.ts)..."`. Buffering the map phase is necessary because findings must be fully collected before the reduce pass. No output to stdout during map phase. This asymmetry (buffered map, streamed reduce) is deliberate — the map phase can't stream to the user because the output would be raw per-chunk findings (undeduped, no aggregation). Only the reduce output is user-facing.
 - **Reduce phase**: **streamed** via `provider.chatStream()` — the final aggregated output streams to **stdout**. No stderr progress during reduce streaming (to avoid interleaving). A single stderr line before reduce starts: `"Aggregating findings..."`.
-- **Mid-file hunk splits**: when a file is split across chunks at hunk boundaries, each chunk's progress marker includes the file path with a `(partial)` suffix: `"Reviewing chunk 3/5 (large-file.ts (partial), utils.ts)..."`
+
+**stdout/stderr ordering:** All stderr progress writes use synchronous `process.stderr.write()` and complete before the next stdout write begins. During the reduce streaming phase, no stderr writes occur. This prevents interleaving in terminal output. In piped/CI environments, stderr and stdout go to separate file descriptors and never interleave at the OS level.
+- **Mid-file hunk splits** (see Diff Splitting Step 4 for the algorithm): when a file is split across chunks at hunk boundaries, each chunk's progress marker includes the file path with a `(partial)` suffix: `"Reviewing chunk 3/5 (large-file.ts (partial), utils.ts)..."`
 
 **Non-streaming chunked mode** (`stream: false`):
 
-All phases (map + reduce) use `provider.chat()` (buffered). Progress markers still emit to stderr between chunks. The final formatted result is returned as a single `ReviewResult` — same shape as the current single-pass buffered review. The caller (CLI/MCP) sees no difference in the return type, only in the stderr progress output and potentially richer token accounting.
+All phases (map + reduce) use `provider.chat()` (buffered). Progress markers emit to stderr between chunks (suppressed when `!process.stderr.isTTY` to avoid polluting CI logs — same pattern as the existing `progress()` helper in cli.ts). The final formatted result is returned as a single `ReviewResult` — same shape as the current single-pass buffered review. The caller (CLI/MCP) sees no difference in the return type, only in the stderr progress output and potentially richer token accounting.
 
 ### Edge Cases
 
@@ -765,7 +868,7 @@ All phases (map + reduce) use `provider.chat()` (buffered). Progress markers sti
 | All files fit in 1 chunk | 1 chunk → skip reduce pass |
 | 10 files, need 3 chunks | 3 map passes + 1 reduce |
 | Reduce input exceeds budget | Truncate oldest chunk findings with warning |
-| Provider error on chunk N | Each chunk call uses the provider's built-in retry logic (exponential backoff). If retries exhausted, fail entire review: "Review failed on chunk {n}/{total} (files: [...]): {cause}". No partial results, no resume. Rationale: partial results without reduce aggregation are misleading — the user might think the review is complete. |
+| Provider error on chunk N | Each chunk call uses the provider's built-in retry logic (exponential backoff). If retries exhausted, fail entire review: "Review failed on chunk {n}/{total} (files: [...]): {cause}". No partial results, no resume. No checkpoint/resume mechanism in v1 — the user reruns the full review. Rationale: partial results without reduce aggregation are misleading, and checkpoint storage adds significant complexity for a scenario that's rare (transient errors are retried). |
 | Empty chunk findings | Include in reduce with note "no issues found in chunk N" |
 | Single hunk exceeds budget | Truncate hunk with warning, continue review |
 
@@ -954,6 +1057,21 @@ No new error classes needed — all scenarios fit existing classes with new erro
 5. One file exceeds budget → hunk-level split
 6. One hunk exceeds budget → truncate with warning
 7. Files sorted largest-first → verify bin-packing efficiency
+8. maxPromptTokens <= 0        → throws ReviewError immediately
+9. Token estimation overflow   → retry with reduced budget on context-length error
+```
+
+### Severity Marker Parsing Tests (must all be covered)
+
+```
+1. "### HIGH" / "### MEDIUM" / "### LOW" (default prompt format)
+2. "[HIGH]" / "[MEDIUM]" / "[LOW]" (inline tag format)
+3. "**HIGH**" / "**MEDIUM**" / "**LOW**" (bold format)
+4. Case variations: "### high", "### High", "### HIGH"
+5. Mixed formats within same chunk
+6. No severity markers at all → entire chunk treated as MEDIUM
+7. Content before first marker → treated as MEDIUM (preamble)
+8. Marker at start of line vs mid-line (only start-of-line counts)
 ```
 
 ### Test Mocking Patterns
@@ -1029,3 +1147,7 @@ Items that are real concerns but better addressed during implementation than in 
 - **Hunk truncation warning actionability** — for models already at max context, the "use a larger-context model" suggestion isn't helpful. Implementation should detect this and adjust the message to "split this file into smaller changes" instead.
 - **Config migration path for existing users** — the fallback mechanism handles this silently. If user feedback indicates confusion, add a one-time migration notice in a future release.
 - **Provider retry policy consistency** — ensure `OllamaProvider.shouldRetry()` and `CopilotProvider.shouldRetry()` are tested with the same error scenarios to verify no gaps.
+- **Session token cache expiry mid-review** — for long chunked reviews (10+ minutes), the Copilot session token may expire between chunks. The existing auth.ts refresh logic handles this transparently (re-exchanges on 401), but verify with a test that simulates expiry mid-pipeline.
+- **Responses API fallback flag as shared mutable state** — the per-model fallback Map is written during sequential chunk processing (no concurrent writes). If parallel chunk execution is added later (Section 9), this needs a concurrent-safe structure.
+- **autoSelect() vs listModels() cache race** — autoSelect() returns a model ID that must exist in listModels(). Both are called sequentially (auto-select, then validate via listModels). If the model list changes between calls (model removed), validateModel throws ModelError. This is acceptable — it's a transient error the user can retry.
+- **File manifest in user message may affect downstream message parsers** — the markdown table format is standard and shouldn't break anything, but test with MCP consumers that parse the review content.
