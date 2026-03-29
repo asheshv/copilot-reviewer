@@ -45,6 +45,11 @@ export interface ReviewProvider {
    *   - OllamaProvider: checks base URL reachability (GET /api/tags, 5s timeout)
    * This is separate from healthCheck() — initialize() is required for normal operation,
    * healthCheck() is diagnostic-only (status command).
+   *
+   * Contract:
+   *   - Idempotent: calling initialize() multiple times is safe (second+ calls are no-ops)
+   *   - If initialize() throws, the provider is safe to dispose() immediately
+   *   - Partial success (e.g., auth OK but model list fails) is treated as failure — throws
    */
   initialize(): Promise<void>;
 
@@ -57,8 +62,11 @@ export interface ReviewProvider {
    *   - Connection/auth errors: throws before yielding any chunks
    *   - Mid-stream errors: yields { type: "error", text: "..." } chunk, then returns
    *     (does NOT throw — caller must check for error chunks)
+   *     Provider MUST NOT yield any further chunks after an error chunk.
+   *     The AsyncIterable completes (returns) immediately after the error chunk.
    *   - Normal completion: final chunk is { type: "done", usage, model }
-   * Callers must consume the full iterable to ensure cleanup.
+   * Callers MAY break iteration early upon receiving an error chunk.
+   * If callers consume the full iterable, cleanup is guaranteed.
    */
   chatStream(request: ChatRequest): AsyncIterable<StreamChunk>;
 
@@ -100,6 +108,9 @@ export interface ReviewProvider {
    * Timeout: 5 seconds (hardcoded, not configurable). If the provider
    * doesn't respond within 5s, return { ok: false, latencyMs: null, error: "timeout" }.
    * Must not throw — return error in the result object.
+   * May be called before initialize() — for the status command, we want to check
+   * reachability without full initialization. If credentials are needed for the health
+   * endpoint, healthCheck() returns { ok: false, error: "not_initialized" }.
    */
   healthCheck(): Promise<{ ok: boolean; latencyMs: number | null; error?: string }>;
 }
@@ -154,14 +165,26 @@ Handles the common `/chat/completions` protocol shared by Copilot, Ollama, OpenA
 export abstract class OpenAIChatProvider implements ReviewProvider {
   abstract readonly name: string;
 
+  private _initialized = false;
+
   constructor(protected baseUrl: string) {}
+
+  /** Default initialize() — subclasses override for provider-specific validation */
+  async initialize(): Promise<void> {
+    if (this._initialized) return;  // idempotent
+    // Subclasses override to add auth validation, connectivity checks, etc.
+    this._initialized = true;
+  }
+
+  /** Default dispose() — subclasses override for cleanup */
+  dispose(): void { /* no-op by default */ }
 
   /**
    * Subclasses provide request headers. Return value MUST include:
-   *   - "Content-Type": "application/json" (always)
    *   - "Authorization": "Bearer ..." (if provider requires auth)
-   * For no-auth providers like Ollama, return { "Content-Type": "application/json" } only.
-   * The base class merges these with any base-class headers before sending.
+   * For no-auth providers like Ollama, return empty object {}.
+   * The base class adds "Content-Type: application/json" automatically —
+   * subclass headers CANNOT override it (base-class headers win on collision).
    */
   protected abstract getHeaders(): Promise<Record<string, string>>;
 
@@ -260,14 +283,20 @@ export class OllamaProvider extends OpenAIChatProvider {
   // getHeaders() — empty auth, Content-Type only
   // listModels() — two-step discovery:
   //   1. GET /api/tags → list of model names
+  //      Error: if GET fails (connection error, 500, timeout) → throw ClientError
+  //      Error: if response is not JSON or missing .models array → throw ClientError
+  //      Edge: if Ollama is old version without /api/tags → throw ClientError("unsupported_version")
   //   2. For each model, POST /api/show { name } → extract context length
   //      from modelfile parameters (num_ctx) or model metadata.
-  //      Fallback: if context length unavailable, default to 4096 tokens
+  //      Fallback: if /api/show fails for a single model → log warning, use default 4096 tokens
+  //      Fallback: if context length field missing in response → use default 4096 tokens
   //      (conservative — avoids overflowing small models).
+  //      Error: if ALL /api/show calls fail → still return models with 4096 defaults (don't fail)
   //   Transform to ModelInfo[] with maxPromptTokens from discovered context length.
   //   Cache results for 5 minutes (same TTL as Copilot).
   //   Concurrent callers share the same in-flight promise (coalesce pattern,
   //   same as auth.ts refreshPromise) to avoid thundering herd on /api/show.
+  //   Edge: if /api/tags returns empty array → return [] (no models installed, not an error)
   // No autoSelect — user must pick a model
   // chat/chatStream inherited — Ollama speaks /v1/chat/completions
 }
@@ -291,6 +320,11 @@ try {
 if (parsed.pathname !== "/" && parsed.pathname !== "") {
   throw new ConfigError("invalid_url",
     `Ollama base URL must not include a path (got '${parsed.pathname}'). Use the root URL, e.g., http://localhost:11434`,
+    baseUrl, false);
+}
+if (parsed.search || parsed.hash) {
+  throw new ConfigError("invalid_url",
+    `Ollama base URL must not include query parameters or fragments. Remove '${parsed.search}${parsed.hash}'`,
     baseUrl, false);
 }
 // parsed.host includes port when non-default (e.g., "localhost:11434")
@@ -400,7 +434,7 @@ New paths:
 - **Global**: `~/.code-reviewer/config.json`
 - **Project**: `<git-root>/.code-reviewer/config.json`
 
-Backward compatibility: if the new path does not exist, silently fall back to the old path (`~/.copilot-review/`). No warnings emitted. New path takes precedence if both exist.
+Backward compatibility: if the new path does not exist, fall back to the old path (`~/.copilot-review/`). New path takes precedence if both exist. Fallback is **file-level** — the entire config file is loaded from one path or the other, never merged field-by-field across both paths.
 
 **Migration risk assessment:** We considered the risk of silent config loss when both `~/.code-reviewer/` and `~/.copilot-review/` exist. The precedence rule (new path wins) is deterministic, but a user who manually edits the old path after the new one was auto-created would see their changes ignored without any feedback.
 
@@ -429,6 +463,8 @@ Layer  Source                         Fields affected
 4      Global config file             all ConfigFile fields (provider, model, format,
        ~/.code-reviewer/config.json   stream, prompt, defaultBase, ignorePaths, chunking,
        (fallback: ~/.copilot-review/) providerOptions, mode)
+                                      URL fields (providerOptions.ollama.baseUrl) validated
+                                      at config load time, same as env vars
 5      Project config file            same as layer 4
        <git-root>/.code-reviewer/
        (fallback: .copilot-review/)
@@ -437,6 +473,8 @@ Layer  Source                         Fields affected
 ```
 
 Environment variables slot between defaults and config files — config files can override them, CLI always wins. Each layer only overrides fields it explicitly sets; unset fields pass through from the previous layer.
+
+**Validation timing:** All env vars and config file values are validated eagerly during `loadConfig()`. Invalid values (malformed URLs, unknown chunking modes) throw `ConfigError` immediately — before provider construction or review pipeline starts. `CODEREVIEWER_PROVIDER` is **not** validated against `availableProviders()` at config time (it's just a string); validation happens in `createProvider()` where the registry is available.
 
 **`providerOptions` merge semantics:** shallow merge per provider key. If project config sets `providerOptions.ollama`, it **replaces** the entire `ollama` object from the global config (not deep-merged). This is consistent with how the existing config merge works for simple fields and avoids surprising partial-override behavior. Example:
 
@@ -585,6 +623,12 @@ chunking = "never":   → current behavior, throw ReviewError if diff too large
 
 **Model resolution failure:** If model resolution fails (auto-select API error, model not found), the review fails immediately with `ModelError` — same as current behavior. Chunking is never attempted without a resolved model. There is no fallback to a default `maxPromptTokens`.
 
+**Model resolution with providers that lack auto-select (e.g., Ollama):**
+- `model: "auto"` + Ollama → `resolveModel()` checks `provider.autoSelect` → absent → throws `ConfigError("model_required", "Provider 'ollama' requires an explicit model. Use --model or set model in config. Run 'copilot-review models --provider ollama' to see available models.")`
+- This check happens early in the review pipeline, before diff collection or chunking.
+- The `status` command also surfaces this: `Model: (not set — required, use --model)`
+- CLI example: `copilot-review --provider ollama` without `--model` → same error, exit code 5 (CONFIG_ERROR).
+
 **Expected behavior:** With modern models (128k+ context), the vast majority of reviews (~70-80% for typical PRs) will fit in a single pass. Chunking primarily benefits large refactors, dependency updates, or reviews against smaller-context local models (e.g., Ollama with 8k-32k models). The `chunking: "auto"` default ensures zero overhead for the common case.
 
 ### Diff Splitting
@@ -595,6 +639,15 @@ The unit of chunking is a **file**. A single file is never split across chunks u
 Step 1: Split raw diff into per-file segments
   Parse unified diff by "diff --git" boundaries.
   Result: Map<filePath, { raw: string, file: FileChange }>
+
+  Error handling:
+    - If raw diff contains no "diff --git" boundaries → treat entire diff as single file
+      segment with path "unknown" (graceful degradation, not an error — some diff formats
+      may lack git headers)
+    - If a hunk header is malformed (doesn't match @@ regex) → skip that hunk, include
+      surrounding content in the file segment, emit warning
+    - Binary files (detected by "Binary files ... differ") → exclude from chunking,
+      emit warning: "Binary file {path} excluded from review"
 
   Hunk header parsing must handle all unified diff variants:
     @@ -10,5 +10,8 @@    — standard modified file
@@ -609,9 +662,12 @@ Step 2: Estimate tokens per file
   for code vs ~4.5 for English). The strict < in the "fits" check and the 80%
   threshold (not 100%) provide cumulative headroom. If a chunk overflows at the
   API level (model returns a context-length error), the review pipeline catches
-  the ClientError and retries that chunk with a reduced budget (chunkBudget * 0.8)
-  once before failing. This self-corrects for estimation inaccuracy without
-  requiring a precise tokenizer.
+  the ClientError and retries that specific chunk once with a reduced budget
+  (chunkBudget * 0.8), re-running bin-packing for that chunk's files only.
+  "Once" = exactly one retry per chunk — if 0.8x also overflows, the chunk fails
+  with ReviewError. This budget-reduction retry is separate from the provider's
+  built-in retry logic (which handles transient errors like 429/503). This
+  self-corrects for estimation inaccuracy without requiring a precise tokenizer.
 
 Step 3: Bin-pack files into chunks (first-fit decreasing)
   Budget calculation:
@@ -650,11 +706,17 @@ Step 3: Bin-pack files into chunks (first-fit decreasing)
 
 Step 4: Hunk-level fallback (rare — massive single files only)
   Split the file's diff by @@ hunk headers.
+  Edge: if file has zero parseable hunks (only file header, no content changes) →
+    treat entire file segment as one "hunk" for bin-packing purposes.
+  Edge: if @@ headers are malformed → treat surrounding content as a single hunk.
   Bin-pack hunks into chunks the same way.
   If a single hunk exceeds budget → truncate:
     - Truncate to approximately `chunkBudget * 4` characters, but snap to the
       nearest newline boundary (scan backward for \n). This ensures truncation
       never breaks a diff line mid-syntax, which would confuse the model.
+      Edge: if no newline found within the last 1000 characters (e.g., minified
+      file), truncate at the character limit anyway — a broken line is better
+      than exceeding the token budget.
     - Append: `\n... [truncated — {originalTokens} tokens reduced to {budgetTokens}. Full hunk too large for model context.]\n`
     - Preserve the @@ header line (so the model knows the file/line context)
     - Emit warning to stderr: `"Warning: hunk in {filePath} at line {startLine} truncated ({originalTokens} tokens exceeds {budgetTokens} budget). Consider reviewing this file separately with a larger-context model, or use ignorePaths to exclude it."`
@@ -676,8 +738,15 @@ For each chunk (sequential):
     ```"
 
   → Send to provider.chat()
-  → Collect: findings text + usage
+  → Collect: ChatResponse.content (raw model output — markdown text following the
+    review prompt format: severity headers, file/line references, suggestions)
+    + ChatResponse.usage
   → Emit progress: "Chunk {i}/{n} done"
+
+  The map phase does NOT parse or validate the findings format — it passes the raw
+  model output as-is to the reduce phase. Severity parsing only happens during
+  reduce overflow truncation (Section 4, Overflow handling). If the model produces
+  unexpected format, the reduce phase still receives it and does best-effort aggregation.
 ```
 
 Sequential execution because:
@@ -685,7 +754,9 @@ Sequential execution because:
 - Predictable progress reporting — each chunk completion is a natural progress event.
 - Simpler error handling — fail fast on chunk 1 auth errors.
 
-The resolved `ModelInfo` is **not re-validated** between chunks. The model is resolved once before the pipeline starts. If a model becomes unavailable mid-review (provider restart, model unloaded), the chunk call fails with `ClientError` and the review fails — same as a single-pass review would. Re-validating per chunk would add latency for a scenario that's rare and unrecoverable anyway.
+The resolved `ModelInfo` is **not re-validated** between chunks. The model is resolved once before the pipeline starts. If a model becomes unavailable mid-review (provider restart, model unloaded), the chunk's `provider.chat()` call fails with `ClientError` and the review fails — the implicit API-level failure is the detection mechanism, not explicit re-validation.
+
+**Auth/credential failure mid-pipeline:** If chunk 1 succeeds but chunk 2 gets `AuthError` (token expired), `AuthError` is non-retryable (see `shouldRetry()` — auth errors are never retried). The review fails immediately with "Review failed on chunk 2/N: {auth error}". For Copilot, the session token refresh logic in `getHeaders()` should prevent this (refreshes proactively when close to expiry), but if it happens, it's a hard failure.
 
 **Phase 2: REDUCE — Aggregate and reconcile**
 
@@ -726,6 +797,12 @@ The reduce pass sees **findings only**, not raw diffs — so it fits in the toke
 Uses the same model as the map passes — the resolved `ModelInfo` from the initial model resolution step is reused for all map passes and the reduce pass. No second auto-select call is made. This is intentional: model consistency across all phases ensures the reduce pass interprets findings in the same "voice" as the model that generated them. For Copilot's auto-select, the session token exchange caches for the session duration anyway, so a re-select would return the same model. Independently configurable reduce model is deferred to a future enhancement.
 
 If only one chunk was produced (diff fit in a single chunk after all), the reduce pass is **skipped** — no aggregation needed. This applies even when `chunking: "always"` — if the diff only produces one chunk, the reduce pass adds no value. The `chunking: "always"` flag forces the chunking *pipeline* to run (bin-packing, chunk message format), but does not force a reduce pass when there's nothing to aggregate.
+
+**Observable difference** between `chunking: "always"` producing 1 chunk vs. no chunking:
+- The user message format differs: chunked mode prepends "Review chunk 1 of 1. Files in this chunk: [...]" before the diff. Non-chunked mode uses the current "Review the following changes." format.
+- Token accounting: chunked mode always populates `ChunkedReviewResult` (with 1 chunk entry). Non-chunked returns plain `ReviewResult`.
+- Stderr: chunked mode emits "Reviewing chunk 1/1 (...)" progress. Non-chunked emits "Requesting review...".
+- The review content itself should be equivalent — same model, same diff, slightly different framing.
 
 **Reduce pass token budget calculation:**
 
@@ -1082,12 +1159,19 @@ The `ReviewProvider` interface simplifies test mocking compared to the current s
 // Test helper: create a mock provider for unit tests
 class MockProvider implements ReviewProvider {
   readonly name = "mock";
+
+  // Configurable responses — override per test
   chatResponse: ChatResponse = { content: "No issues.", model: "mock", usage: { totalTokens: 10 } };
+  streamChunks: StreamChunk[] | null = null;  // if set, chatStream yields these instead of splitting chatResponse
   models: ModelInfo[] = [{ id: "mock-model", name: "Mock", endpoints: ["/chat/completions"],
     streaming: true, toolCalls: false, maxPromptTokens: 128000, maxOutputTokens: 4096, tokenizer: "mock" }];
+  healthResult: { ok: boolean; latencyMs: number | null; error?: string } = { ok: true, latencyMs: 1 };
 
   // Track calls for assertions
   chatCalls: ChatRequest[] = [];
+  private _initialized = false;
+
+  async initialize(): Promise<void> { this._initialized = true; }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
     this.chatCalls.push(req);
@@ -1096,8 +1180,13 @@ class MockProvider implements ReviewProvider {
 
   async *chatStream(req: ChatRequest): AsyncIterable<StreamChunk> {
     this.chatCalls.push(req);
-    // Simulate realistic streaming: multiple content chunks then done
-    const words = this.chatResponse.content.split(" ");
+    if (this.streamChunks) {
+      // Use explicit stream chunks (for testing error chunks, custom sequences)
+      for (const chunk of this.streamChunks) { yield chunk; }
+      return;
+    }
+    // Default: split chatResponse content by words
+    const words = (this.chatResponse.content || "").split(" ").filter(Boolean);
     for (const word of words) {
       yield { type: "content", text: word + " " };
     }
@@ -1110,8 +1199,8 @@ class MockProvider implements ReviewProvider {
     if (!m) throw new ModelError("model_not_found", `Model '${id}' not found`, false);
     return m;
   }
-  async healthCheck() { return { ok: true, latencyMs: 1 }; }
-  dispose(): void { /* no-op */ }
+  async healthCheck() { return this.healthResult; }
+  dispose(): void { this._initialized = false; }
 }
 ```
 
