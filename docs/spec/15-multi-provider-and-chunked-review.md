@@ -36,25 +36,49 @@ The core abstraction. Every provider implements this interface.
 export interface ReviewProvider {
   readonly name: string;
 
-  /** Non-streaming chat completion */
+  /**
+   * Validate provider configuration and connectivity. Called once after construction,
+   * before any other method. Allows fail-fast on misconfiguration (bad URL, auth failure)
+   * before the review pipeline starts. Throws on failure — callers should not proceed
+   * if initialize() rejects.
+   *   - CopilotProvider: validates auth token, exchanges session token
+   *   - OllamaProvider: checks base URL reachability (GET /api/tags, 5s timeout)
+   * This is separate from healthCheck() — initialize() is required for normal operation,
+   * healthCheck() is diagnostic-only (status command).
+   */
+  initialize(): Promise<void>;
+
+  /** Non-streaming chat completion. Throws ClientError on API failure. */
   chat(request: ChatRequest): Promise<ChatResponse>;
 
-  /** Streaming chat completion */
+  /**
+   * Streaming chat completion. Yields StreamChunk objects.
+   * Error contract:
+   *   - Connection/auth errors: throws before yielding any chunks
+   *   - Mid-stream errors: yields { type: "error", text: "..." } chunk, then returns
+   *     (does NOT throw — caller must check for error chunks)
+   *   - Normal completion: final chunk is { type: "done", usage, model }
+   * Callers must consume the full iterable to ensure cleanup.
+   */
   chatStream(request: ChatRequest): AsyncIterable<StreamChunk>;
 
-  /** List available models on this provider */
+  /** List available models on this provider. Throws ClientError on API failure. */
   listModels(): Promise<ModelInfo[]>;
 
-  /** Validate a model ID exists on this provider */
+  /** Validate a model ID exists. Throws ModelError if not found. */
   validateModel(id: string): Promise<ModelInfo>;
 
-  /** Auto-select best model (optional — not all providers support this) */
+  /**
+   * Auto-select best model (optional — not all providers support this).
+   * When absent, callers must check and require explicit model selection:
+   *   if (!provider.autoSelect) throw ConfigError("model_required", ...)
+   */
   autoSelect?(): Promise<string>;
 
   /**
    * Release any resources held by this provider (cached tokens, open connections).
    * Called when the provider is no longer needed — CLI exit, MCP server shutdown.
-   * Implementations that hold no state can be a no-op.
+   * Must not throw — log errors internally. Must complete within 1 second (best-effort).
    *   - CopilotProvider: clears cached session token
    *   - OllamaProvider: no-op (stateless)
    * Not called between individual review calls — providers are long-lived within a session.
@@ -70,6 +94,7 @@ export interface ReviewProvider {
    *   - Ollama: GET /api/tags (lightweight, returns quickly)
    * Timeout: 5 seconds (hardcoded, not configurable). If the provider
    * doesn't respond within 5s, return { ok: false, latencyMs: null, error: "timeout" }.
+   * Must not throw — return error in the result object.
    */
   healthCheck(): Promise<{ ok: boolean; latencyMs: number | null; error?: string }>;
 }
@@ -78,9 +103,27 @@ export interface ReviewProvider {
 Key decisions:
 
 - `chat` and `chatStream` use the existing `ChatRequest` / `ChatResponse` / `StreamChunk` types unchanged — they are already provider-agnostic.
+- **Error types:** `chat`/`chatStream`/`listModels` throw `ClientError`. `validateModel` throws `ModelError`. `initialize` throws `AuthError` or `ClientError`. This matches the existing error hierarchy — callers already handle these types.
 - `listModels` and `validateModel` move into the provider. Currently split across `CopilotClient` + `ModelManager`, they merge into a single provider object.
-- `autoSelect` is optional — Copilot has this endpoint, most others do not.
+- `autoSelect` is optional — Copilot has this endpoint, most others do not. The review pipeline checks `if (!provider.autoSelect)` before calling and throws `ConfigError("model_required")` with an actionable message.
 - The `useResponsesApi` boolean currently threaded through client code becomes an internal Copilot implementation detail, hidden behind the interface.
+
+**ModelInfo interface** (existing, unchanged — shown for reference):
+
+```typescript
+interface ModelInfo {
+  id: string;                // e.g., "gpt-4.1"
+  name: string;              // human-readable name
+  endpoints: string[];       // ["/chat/completions", "/responses"]
+  streaming: boolean;        // supports streaming
+  toolCalls: boolean;        // supports tool calls
+  maxPromptTokens: number;   // context window for input
+  maxOutputTokens: number;   // max generation length
+  tokenizer: string;         // e.g., "o200k_base"
+}
+```
+
+For Ollama, `endpoints` is always `["/v1/chat/completions"]`, `tokenizer` is `"unknown"`, and `maxPromptTokens` comes from `/api/show` discovery (see OllamaProvider).
 
 ---
 
@@ -151,7 +194,9 @@ protected shouldRetry(error: ClientError): boolean {
 ```
 
 - `CopilotProvider`: inherits default (same as current behavior) + retries on 403 with rate-limit headers.
-- `OllamaProvider`: overrides to also retry on `ECONNREFUSED` (Ollama may be starting up).
+- `OllamaProvider`: overrides to also retry on `ECONNREFUSED` (Ollama may be starting up). Transforms Node.js `ECONNREFUSED` into `ClientError("provider_unavailable")` before calling `shouldRetry()`.
+
+**Mid-stream errors:** `shouldRetry()` applies only to `chat()` (buffered). For `chatStream()`, retries are not attempted — the stream contract yields an error chunk instead (see interface docs above). The caller decides whether to retry the full request.
 
 ### CopilotProvider
 
@@ -173,7 +218,8 @@ export class CopilotProvider extends OpenAIChatProvider {
   //   Fallback: if /responses returns 404 or 400 (not 401/403/429),
   //     retry once with /chat/completions (same model, different body format)
   //   No fallback on: auth errors (401/403), rate limits (429), server errors (5xx)
-  //   Fallback is logged to stderr when verbose mode is enabled
+  //   Fallback is tracked internally (provider sets a flag to skip /responses for this model
+  //   for the remainder of the session). Callers are unaware — no stderr dependency.
 
   // listModels() — current ModelManager logic (filter, dedup, policy enable)
   // autoSelect() — current /models/session logic
@@ -251,7 +297,7 @@ const PROVIDERS: Record<string, ProviderFactory> = {
   },
 };
 
-export function createProvider(config: ResolvedConfig): ReviewProvider {
+export async function createProvider(config: ResolvedConfig): Promise<ReviewProvider> {
   const factory = PROVIDERS[config.provider];
   if (!factory) {
     const available = Object.keys(PROVIDERS).join(", ");
@@ -263,7 +309,9 @@ export function createProvider(config: ResolvedConfig): ReviewProvider {
     );
   }
   try {
-    return factory(config);
+    const provider = factory(config);
+    await provider.initialize();
+    return provider;
   } catch (error) {
     // Wrap provider construction errors with context about which provider failed
     if (error instanceof ConfigError) throw error;
@@ -309,7 +357,13 @@ interface ConfigFile {
 interface ResolvedConfig {
   // ... existing fields ...
   provider: string;
-  providerOptions: Record<string, Record<string, unknown>>;
+  providerOptions: {
+    ollama?: { baseUrl: string };       // resolved with default applied
+    // Future providers add their own key here.
+    // Each key is the provider name; value is provider-specific config.
+    // Unknown keys are preserved (forward-compatible) but ignored by the factory.
+    [key: string]: Record<string, unknown> | undefined;
+  };
   chunking: "auto" | "always" | "never";
 }
 ```
@@ -455,7 +509,7 @@ const models = new ModelManager(auth);
 review(options, client, models);
 
 // After
-const provider = createProvider(config);
+const provider = await createProvider(config);  // constructs + initialize()
 review(options, provider);
 ```
 
@@ -481,6 +535,8 @@ chunking = "never":   → current behavior, throw ReviewError if diff too large
 ```
 
 **Important:** The 80% threshold is always evaluated against the **resolved** model's `maxPromptTokens`, never against `model: "auto"`. Model resolution (auto-select or explicit validation) must complete before the chunking decision is made. This is the same ordering as the current pipeline — `resolveModel()` runs before `checkTokenBudget()`.
+
+**Model resolution failure:** If model resolution fails (auto-select API error, model not found), the review fails immediately with `ModelError` — same as current behavior. Chunking is never attempted without a resolved model. There is no fallback to a default `maxPromptTokens`.
 
 **Expected behavior:** With modern models (128k+ context), the vast majority of reviews (~70-80% for typical PRs) will fit in a single pass. Chunking primarily benefits large refactors, dependency updates, or reviews against smaller-context local models (e.g., Ollama with 8k-32k models). The `chunking: "auto"` default ensures zero overhead for the common case.
 
@@ -568,8 +624,10 @@ Sequential execution because:
 ```
 System prompt:
   "You are a code review aggregator. Deduplicate findings,
-   reconcile severity, flag cross-file issues, produce a
-   unified review report."
+   reconcile severity, produce a unified review report.
+   Flag any cross-file issues you can infer from the findings
+   (e.g., API contract mismatches, inconsistent error handling).
+   The full file list is provided at the end for context."
 
 User message:
   "The following are review findings from {n} review passes
@@ -582,13 +640,16 @@ User message:
   {chunk 2 findings}
   ...
 
+  "## All files in this review (for cross-file analysis)"
+  [full file list with status — same manifest format as the user message]
+
   → Send to provider.chat()
   → Result: unified review
 ```
 
 The reduce pass sees **findings only**, not raw diffs — so it fits in the token budget even for large reviews.
 
-Uses the same model as the map passes — the resolved `ModelInfo` from the initial model resolution step is reused for all map passes and the reduce pass. No second auto-select call is made. Independently configurable reduce model is deferred to a future enhancement.
+Uses the same model as the map passes — the resolved `ModelInfo` from the initial model resolution step is reused for all map passes and the reduce pass. No second auto-select call is made. This is intentional: model consistency across all phases ensures the reduce pass interprets findings in the same "voice" as the model that generated them. For Copilot's auto-select, the session token exchange caches for the session duration anyway, so a re-select would return the same model. Independently configurable reduce model is deferred to a future enhancement.
 
 If only one chunk was produced (diff fit in a single chunk after all), the reduce pass is **skipped** — no aggregation needed. This applies even when `chunking: "always"` — if the diff only produces one chunk, the reduce pass adds no value. The `chunking: "always"` flag forces the chunking *pipeline* to run (bin-packing, chunk message format), but does not force a reduce pass when there's nothing to aggregate.
 
@@ -628,6 +689,16 @@ The reduce input can overflow in pathological cases — e.g., 50 chunks each pro
 4. Emit warning: `"Reduce pass: truncated findings to fit token budget (preserved all HIGH, {n} MEDIUM compressed, {m} LOW omitted)"`
 
 This ensures HIGH findings are never lost. In the pathological case where HIGH findings alone exceed the budget, fall back to proportional truncation across all content with a warning.
+
+**Truncation visibility in reduce pass:** When truncation occurs, the reduce input includes a preamble before the chunk findings:
+
+```
+Note: Some findings were truncated to fit the token budget.
+Truncated chunks: [list of chunk numbers with truncation details].
+Your aggregation should note that LOW/MEDIUM findings may be incomplete.
+```
+
+This ensures the reduce model knows content was dropped and can flag it in the final output. All truncation warnings are also collected in the `ReviewResult.warnings` array for the CLI/MCP caller.
 
 **Phase 3: FORMAT — Same as current**
 
@@ -760,6 +831,10 @@ src/lib/
                     #   review() → resolveModel() → shouldChunk() decision →
                     #     if single-pass: singlePassReview() (existing logic, minor signature change)
                     #     if chunked: chunkDiff() → mapReview() → reduceReview() → format()
+                    # Dependency flow (no circular deps):
+                    #   review.ts imports: providers/types (interface), chunking, prompt, formatter, diff
+                    #   chunking.ts imports: types only (pure function, no provider dependency)
+                    #   providers/* imports: types, auth, streaming (no review dependency)
 ├── types.ts        # New config fields, ChunkedReviewResult (~30 lines added)
 ├── config.ts       # Env var layer, new fields, new config paths + fallback (~60 lines added)
 ├── prompt.ts       # Chunk message + reduce prompt assembly (~40 lines added)
@@ -775,7 +850,11 @@ src/
 ```
 src/lib/
 ├── client.ts       # Logic relocates to openai-chat-provider.ts + copilot-provider.ts
-├── models.ts       # Logic relocates into provider implementations
+├── models.ts       # Logic splits:
+                    #   - Model listing, filtering, dedup, policy enable → copilot-provider.ts
+                    #   - ModelInfo type, validation logic → providers/types.ts (shared)
+                    #   - Model caching (5-min TTL) → openai-chat-provider.ts (shared by all providers)
+                    #   - Auto-select → copilot-provider.ts (Copilot-specific)
 ```
 
 ### Unchanged files
@@ -800,7 +879,7 @@ src/lib/
 | Ollama model not found | `ModelError` | `model_not_found` | "Model '{id}' not found on Ollama. Run `copilot-review models --provider ollama` to see available models." |
 | No model specified, provider lacks auto-select | `ConfigError` | `model_required` | "Provider '{name}' requires an explicit model. Use --model or set in config." |
 | Chunk N fails | `ReviewError` | `chunk_failed` | "Review failed on chunk {n}/{total} (files: [...]): {cause}" |
-| Reduce pass fails | `ReviewError` | `reduce_failed` | "Aggregation pass failed: {cause}". Since map-phase findings were already collected, include them as a fallback: concatenate raw chunk findings with chunk headers (same format as reduce input) and emit warning: "Aggregation failed — showing raw per-chunk findings instead." This is better than losing all work. |
+| Reduce pass fails | `ReviewError` | `reduce_failed` | "Aggregation pass failed: {cause}". Since map-phase findings were already collected, include them as a fallback: concatenate raw chunk findings with chunk headers, prepended with `"⚠ Aggregation failed — raw per-chunk findings below (may contain duplicates):\n\n"`. The formatter adds `(unaggregate)` to the output header. This is better than losing all work, and the explicit labeling prevents users from mistaking it for a clean review. |
 | Single hunk exceeds budget | Warning | — | Truncate hunk, continue with warning |
 
 No new error classes needed — all scenarios fit existing classes with new error codes.
@@ -937,3 +1016,16 @@ For `OpenAIChatProvider` base class testing, use a concrete test subclass with `
 - **Anthropic provider** — implement `ReviewProvider` directly (non-OpenAI protocol).
 - **Config migration tooling** — `copilot-review migrate-config` to move `~/.copilot-review/` → `~/.code-reviewer/` with deprecation warnings when old paths are detected.
 - **File/directory scoped review** — `copilot-review local --path src/lib/auth.ts` or `--path src/lib/` to review only specific files or directories, filtering the diff to matching paths before sending to the provider.
+
+---
+
+## 10. Implementation Notes
+
+Items that are real concerns but better addressed during implementation than in this spec. Captured here so they aren't lost.
+
+- **Token estimation accuracy** — the `char / 4` heuristic is a rough estimate. During implementation, validate against a few real diffs and adjust the multiplier or add a safety margin if needed. A proper BPE tokenizer is out of scope for v1 (see spec 01 — "Notably Absent").
+- **Message framing overhead constants** (150 tokens, 10 per-file) — derived from measuring a few representative prompts. Validate during implementation and adjust if empirical testing shows they're off.
+- **Path normalization for bin-packing** — file paths from `git diff` use forward slashes on all platforms. No cross-platform normalization needed for the sort/tie-breaking since git normalizes paths. Verify during implementation on Windows (Git Bash).
+- **Hunk truncation warning actionability** — for models already at max context, the "use a larger-context model" suggestion isn't helpful. Implementation should detect this and adjust the message to "split this file into smaller changes" instead.
+- **Config migration path for existing users** — the fallback mechanism handles this silently. If user feedback indicates confusion, add a one-time migration notice in a future release.
+- **Provider retry policy consistency** — ensure `OllamaProvider.shouldRetry()` and `CopilotProvider.shouldRetry()` are tested with the same error scenarios to verify no gaps.
