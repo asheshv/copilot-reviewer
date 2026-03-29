@@ -189,6 +189,48 @@ describe("OpenAIChatProvider", () => {
       expect(contentChunks[1].text).toBe(" world");
     });
 
+    it("mid-stream error yields {type:'error'} chunk then stops", async () => {
+      // SSE: two valid content chunks, then a chunk with abnormal finish_reason
+      // parseChatCompletionChunk maps any non-stop/non-tool_calls finish_reason to {type:"error"}
+      const sseWithMidStreamError = [
+        'data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}',
+        "",
+        'data: {"choices":[{"delta":{"content":" world"},"finish_reason":null}]}',
+        "",
+        'data: {"choices":[{"finish_reason":"content_filter"}]}',
+        "",
+        'data: [DONE]',
+        "",
+      ].join("\n");
+
+      server.use(
+        http.post("http://test.api/chat/completions", () => {
+          return new HttpResponse(sseWithMidStreamError, {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        })
+      );
+
+      const provider = new TestProvider();
+      const request: ChatRequest = {
+        model: "test-model-1",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "Hi" }],
+        stream: true,
+      };
+
+      const chunks: any[] = [];
+      for await (const chunk of provider.chatStream(request)) {
+        chunks.push(chunk);
+      }
+
+      // Find the error chunk index
+      const errorIdx = chunks.findIndex(c => c.type === "error");
+      expect(errorIdx).toBeGreaterThanOrEqual(0);
+      // No chunks after the error chunk
+      expect(chunks.length).toBe(errorIdx + 1);
+    });
+
     it("pre-stream error throws (does NOT yield)", async () => {
       server.use(
         http.post("http://test.api/chat/completions", () => {
@@ -316,6 +358,48 @@ describe("OpenAIChatProvider", () => {
       expect(attemptCount).toBe(1);
     });
 
+    it("retries on timeout (AbortError)", async () => {
+      let attemptCount = 0;
+
+      // Spy on global fetch: first call throws AbortError, second succeeds
+      const originalFetch = globalThis.fetch;
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (...args) => {
+        attemptCount++;
+        if (attemptCount === 1) {
+          const err = new Error("The operation was aborted");
+          err.name = "AbortError";
+          throw err;
+        }
+        return originalFetch(...args);
+      });
+
+      // Register a handler for the second (real) attempt
+      server.use(
+        http.post("http://test.api/chat/completions", () => {
+          return HttpResponse.json({
+            choices: [{ message: { role: "assistant", content: "retried ok" } }],
+            usage: { total_tokens: 10 },
+            model: "test-model-1",
+          });
+        })
+      );
+
+      try {
+        const provider = new TestProvider();
+        const response = await provider.chat({
+          model: "test-model-1",
+          systemPrompt: "",
+          messages: [{ role: "user", content: "test" }],
+          stream: false,
+        });
+
+        expect(attemptCount).toBe(2);
+        expect(response.content).toBe("retried ok");
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+
     it("does NOT retry on 400 (client error)", async () => {
       let attemptCount = 0;
       server.use(
@@ -349,6 +433,13 @@ describe("OpenAIChatProvider", () => {
       await provider.initialize(); // second call — must not throw
       // No assertion needed beyond "didn't throw"
       expect(true).toBe(true);
+    });
+  });
+
+  describe("dispose()", () => {
+    it("does not throw", () => {
+      const provider = new TestProvider();
+      expect(() => provider.dispose()).not.toThrow();
     });
   });
 

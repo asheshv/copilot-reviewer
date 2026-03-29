@@ -36,7 +36,7 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
    * Return auth/custom headers. Content-Type is added by the base class.
    * Subclass-provided Content-Type is silently overridden.
    */
-  abstract getHeaders(): Promise<Record<string, string>>;
+  protected abstract getHeaders(): Promise<Record<string, string>>;
 
   /** List available models on this provider. */
   abstract listModels(): Promise<ModelInfo[]>;
@@ -68,7 +68,7 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
     const start = Date.now();
 
     try {
-      await fetch(`${this.baseUrl}/`, { signal: controller.signal });
+      await fetch(`${this.baseUrl}`, { signal: controller.signal });
       clearTimeout(timeoutId);
       return { ok: true, latencyMs: Date.now() - start };
     } catch (error) {
