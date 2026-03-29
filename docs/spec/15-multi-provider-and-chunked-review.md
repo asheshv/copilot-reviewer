@@ -499,6 +499,28 @@ Apply existing formatter (markdown/text/json).
 Add metadata: model, total tokens across all rounds, chunk count, files reviewed.
 ```
 
+### File & Line References in Findings
+
+The default review prompt already shows `**File:** \`path\` **Line:** <range>` as the expected output format, but compliance is inconsistent because the model must infer line numbers from raw `@@` hunk headers.
+
+**Improvements (applied in both single-pass and chunked modes):**
+
+1. **Enhanced user message** — `assembleUserMessage()` includes a structured file manifest before the diff:
+
+```
+## Files Changed
+| File | Status | Lines Changed |
+|------|--------|---------------|
+| src/db/queries.ts | modified | 42-58, 103-110 |
+| src/api/handler.ts | added | 1-89 |
+```
+
+The line ranges are extracted from `@@ +start,count @@` hunk headers during diff parsing. This gives the model an explicit lookup table rather than forcing it to parse raw hunks.
+
+2. **Prompt update** — change the review rules to *recommend* (not require) file/line references: "Where possible, include the file path and line number(s) for each finding. Some findings (e.g., architectural concerns, missing code) may not have a specific location — that is fine."
+
+3. **Chunked review context** — in chunked mode, each chunk's user message includes the file manifest for only that chunk's files.
+
 ### Token Accounting
 
 ```typescript
