@@ -152,27 +152,52 @@ export class OllamaProvider extends OpenAIChatProvider {
 }
 ```
 
+**URL validation:** The `OllamaProvider` constructor normalizes the base URL:
+- Strip trailing slashes (`http://localhost:11434/` → `http://localhost:11434`)
+- Validate it parses as a URL (`new URL(baseUrl)` — throws `ConfigError` if invalid)
+- No path appended — must be the root (e.g., `http://host:port`, not `http://host:port/v1`)
+
+```typescript
+// In OllamaProvider constructor:
+const parsed = new URL(baseUrl);
+this.baseUrl = `${parsed.protocol}//${parsed.host}`;  // normalized, no trailing path
+```
+
 ### Provider Factory
+
+Uses a registry pattern so the error message and available provider list stay in sync automatically.
 
 ```typescript
 // src/lib/providers/index.ts
 
+type ProviderFactory = (config: ResolvedConfig) => ReviewProvider;
+
+const PROVIDERS: Record<string, ProviderFactory> = {
+  copilot: (config) => new CopilotProvider(createDefaultAuthProvider()),
+  ollama: (config) => {
+    const url = config.providerOptions.ollama?.baseUrl
+      ?? "http://localhost:11434";
+    return new OllamaProvider(url);
+  },
+};
+
 export function createProvider(config: ResolvedConfig): ReviewProvider {
-  switch (config.provider) {
-    case "copilot":
-      return new CopilotProvider(createDefaultAuthProvider());
-    case "ollama":
-      const url = config.providerOptions.ollama?.baseUrl
-        ?? "http://localhost:11434";
-      return new OllamaProvider(url);
-    default:
-      throw new ConfigError(
-        "unknown_provider",
-        `Unknown provider '${config.provider}'. Available: copilot, ollama`,
-        "config",
-        false
-      );
+  const factory = PROVIDERS[config.provider];
+  if (!factory) {
+    const available = Object.keys(PROVIDERS).join(", ");
+    throw new ConfigError(
+      "unknown_provider",
+      `Unknown provider '${config.provider}'. Available: ${available}`,
+      "config",
+      false
+    );
   }
+  return factory(config);
+}
+
+/** List registered provider names (used by status command, --help, etc.) */
+export function availableProviders(): string[] {
+  return Object.keys(PROVIDERS);
 }
 ```
 
@@ -215,6 +240,8 @@ New paths:
 - **Project**: `<git-root>/.code-reviewer/config.json`
 
 Backward compatibility: if the new path does not exist, silently fall back to the old path (`~/.copilot-review/`). No warnings emitted. New path takes precedence if both exist.
+
+**Migration risk assessment:** We considered the risk of silent shadowing when both `~/.code-reviewer/` and `~/.copilot-review/` exist. The precedence rule (new path wins) is deterministic, but a user who manually edits the old path after the new one was auto-created could be confused. For v1, we accept this risk — the `status` command will show exactly which config file is loaded, making debugging straightforward. A future migration tool or deprecation warning is out of scope but documented in Section 9.
 
 ### Config Merge Order (updated)
 
@@ -290,7 +317,36 @@ Behavior:
 - Pings the provider's API to confirm reachability (lightweight health check, not a full chat call).
 - For Ollama, lists discovered models when reachable.
 - Exits with code 0 if everything is healthy, 1 if any check fails (unreachable, missing required model, auth failure).
-- Accepts `--json` flag for machine-readable output (same data as structured JSON).
+- Accepts `--json` flag for machine-readable output with this schema:
+
+```typescript
+interface StatusOutput {
+  provider: string;
+  model: {
+    configured: string;           // "auto" or explicit model ID
+    resolved: string | null;      // actual model ID after auto-select, null if resolution failed
+  };
+  chunking: "auto" | "always" | "never";
+  stream: boolean;
+  format: string;
+  config: {
+    global: { path: string; found: boolean; fallback?: string; fallbackFound?: boolean };
+    project: { path: string; found: boolean; fallback?: string; fallbackFound?: boolean };
+  };
+  auth: {
+    method: string;               // "env_token" | "copilot_config" | "gh_cli" | "none"
+    valid: boolean;
+    error?: string;
+  };
+  api: {
+    reachable: boolean;
+    latencyMs: number | null;
+    error?: string;
+  };
+  models?: string[];              // discovered model IDs, present when API reachable
+  healthy: boolean;               // overall: true if all checks pass
+}
+```
 
 ### Review Pipeline Change
 
@@ -334,14 +390,23 @@ Step 2: Estimate tokens per file
   tokens ≈ segment.length / 4
 
 Step 3: Bin-pack files into chunks (first-fit decreasing)
-  Available budget per chunk = maxPromptTokens - systemPromptTokens - overhead
-  (overhead ≈ 200 tokens for message framing and chunk context header)
+  Budget calculation:
+    systemPromptTokens = systemPrompt.length / 4
+    messageFraming     = 150 tokens  (role markers, chunk header, file list, code fence)
+    perFileOverhead    = 10 tokens   (per file in the chunk: path listing)
+    chunkBudget        = maxPromptTokens - systemPromptTokens - messageFraming
 
-  Sort files by token estimate, largest first.
-  For each file:
-    if file fits in current chunk → add it
-    if file doesn't fit and current chunk is non-empty → seal chunk, start new one
-    if file alone exceeds budget → hunk-level split (Step 4)
+  "Fits" definition:
+    A file fits in a chunk when:
+      currentChunkTokens + fileTokens + (perFileOverhead * filesInChunk) <= chunkBudget
+
+  Algorithm (first-fit decreasing):
+    Sort files by token estimate, largest first.
+    Tie-breaking: alphabetical by path (deterministic output).
+    For each file:
+      if file fits in current chunk → add it
+      if file doesn't fit and current chunk is non-empty → seal chunk, start new one
+      if file alone exceeds chunkBudget → hunk-level split (Step 4)
 
 Step 4: Hunk-level fallback (rare — massive single files only)
   Split the file's diff by @@ hunk headers.
@@ -402,6 +467,30 @@ Uses the same model as the map passes. Independently configurable reduce model i
 
 If only one chunk was produced (diff fit in a single chunk after all), the reduce pass is **skipped** — no aggregation needed.
 
+**Reduce pass token budget calculation:**
+
+```
+reducePromptTokens = reduceSystemPrompt.length / 4  (≈ 50 tokens, it's short)
+findingsTokens = sum(chunkFindings[i].length / 4)    for all chunks
+framingOverhead = 100 + (numChunks * 30)              chunk headers, instructions
+totalReduceInput = reducePromptTokens + findingsTokens + framingOverhead
+
+reduceBudget = maxPromptTokens * 0.9   (leave 10% headroom for the model)
+```
+
+**Overflow handling** (when `totalReduceInput > reduceBudget`):
+
+The reduce input can overflow in pathological cases — e.g., 50 chunks each producing 2000 tokens of findings = 100k tokens. Strategy:
+
+1. Calculate available space: `available = reduceBudget - reducePromptTokens - framingOverhead`
+2. Per-chunk allowance: `perChunk = floor(available / numChunks)`
+3. For each chunk's findings:
+   - If `findings.length / 4 <= perChunk` → include in full
+   - If exceeds → truncate to `perChunk * 4` characters with suffix: `\n[Truncated — {original} tokens reduced to {perChunk} tokens]`
+4. Emit warning: `"Reduce pass: truncated findings from {n} chunks to fit token budget"`
+
+This ensures the reduce pass always fits, degrading gracefully by proportionally trimming verbose findings.
+
 **Phase 3: FORMAT — Same as current**
 
 ```
@@ -427,8 +516,9 @@ interface ChunkedReviewResult extends ReviewResult {
 
 For `stream: true` with chunking enabled:
 
-- **Map phase**: emit progress markers between chunks (`"--- Reviewing chunk 2/5 (auth.ts, middleware.ts) ---"`)
-- **Reduce phase**: stream the final aggregated output as it comes.
+- **Map phase**: always **buffered** (non-streaming) — each chunk is a complete `provider.chat()` call. Between chunks, emit progress markers to stderr: `"Reviewing chunk 2/5 (auth.ts, middleware.ts)..."`. Buffering the map phase is necessary because findings must be fully collected before the reduce pass.
+- **Reduce phase**: **streamed** via `provider.chatStream()` — the final aggregated output streams to stdout as it arrives.
+- **Mid-file hunk splits**: when a file is split across chunks at hunk boundaries, each chunk's progress marker includes the file path with a `(partial)` suffix: `"Reviewing chunk 3/5 (large-file.ts (partial), utils.ts)..."`
 
 ### Edge Cases
 
@@ -443,6 +533,43 @@ For `stream: true` with chunking enabled:
 | Provider error on chunk N | Fail entire review: "Review failed on chunk {n}/{total} (files: [...]): {cause}". No partial results. |
 | Empty chunk findings | Include in reduce with note "no issues found in chunk N" |
 | Single hunk exceeds budget | Truncate hunk with warning, continue review |
+
+### Example Chunked Review Output
+
+For a diff spanning 8 files split into 3 chunks (markdown format):
+
+```markdown
+# Copilot Code Review
+
+**Model:** gpt-4.1 | **Files:** 8 | **+342 -89** | **Chunks:** 3
+
+## Findings
+
+### HIGH
+
+1. **SQL Injection in `db/queries.ts:45`** — User input interpolated directly into query string...
+
+### MEDIUM
+
+2. **Missing null check in `api/handler.ts:112`** — `req.body.userId` accessed without validation...
+3. **Race condition in `cache/manager.ts:67`** — Concurrent cache invalidation can leave stale entries...
+
+### LOW
+
+4. **Unused import in `utils/format.ts:3`** — `lodash.merge` imported but never used...
+
+---
+*Tokens used: 12,450 (3 chunks + aggregation) | Model: gpt-4.1*
+```
+
+Stderr progress during the review:
+
+```
+Reviewing chunk 1/3 (db/queries.ts, db/migrations.ts, db/schema.ts)... done (3,200 tokens)
+Reviewing chunk 2/3 (api/handler.ts, api/middleware.ts, api/router.ts)... done (2,800 tokens)
+Reviewing chunk 3/3 (cache/manager.ts, utils/format.ts)... done (1,950 tokens)
+Aggregating findings... done (4,500 tokens)
+```
 
 ---
 
@@ -596,3 +723,4 @@ No new error classes needed — all scenarios fit existing classes with new erro
 - **Parallel chunk execution** — configurable concurrency for providers that support it.
 - **Project rename** — `copilot-review` → provider-neutral name.
 - **Anthropic provider** — implement `ReviewProvider` directly (non-OpenAI protocol).
+- **Config migration tooling** — `copilot-review migrate-config` to move `~/.copilot-review/` → `~/.code-reviewer/` with deprecation warnings when old paths are detected.
