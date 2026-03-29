@@ -746,3 +746,4 @@ No new error classes needed — all scenarios fit existing classes with new erro
 - **Project rename** — `copilot-review` → provider-neutral name.
 - **Anthropic provider** — implement `ReviewProvider` directly (non-OpenAI protocol).
 - **Config migration tooling** — `copilot-review migrate-config` to move `~/.copilot-review/` → `~/.code-reviewer/` with deprecation warnings when old paths are detected.
+- **File/directory scoped review** — `copilot-review local --path src/lib/auth.ts` or `--path src/lib/` to review only specific files or directories, filtering the diff to matching paths before sending to the provider.
