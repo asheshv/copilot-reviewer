@@ -50,6 +50,9 @@ export interface ReviewProvider {
 
   /** Auto-select best model (optional — not all providers support this) */
   autoSelect?(): Promise<string>;
+
+  /** Health check — verify provider is reachable. Returns latency in ms. */
+  healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }>;
 }
 ```
 
@@ -235,6 +238,59 @@ Environment variables slot between defaults and config files — config files ca
 ```
 
 The existing `copilot-review models` subcommand becomes provider-aware: `copilot-review models --provider ollama` lists Ollama models. Defaults to the configured provider.
+
+### Status Command
+
+New subcommand: `copilot-review status`
+
+Displays resolved configuration and provider health in a single view. Useful for debugging setup issues and confirming what the tool will use before running a review.
+
+```
+$ copilot-review status
+
+  Provider:       copilot
+  Model:          auto → gpt-4.1 (auto-selected)
+  Chunking:       auto
+  Stream:         true
+  Format:         markdown
+  Config (global): ~/.code-reviewer/config.json (found)
+  Config (project): /repo/.code-reviewer/config.json (not found, fallback: .copilot-review/ not found)
+  Auth:           GitHub token (gh CLI) ✓
+  API reachable:  ✓ (245ms)
+```
+
+```
+$ copilot-review status --provider ollama
+
+  Provider:       ollama
+  Model:          (not set — required, use --model)
+  Base URL:       http://localhost:11434
+  Chunking:       auto
+  Stream:         true
+  Format:         markdown
+  Config (global): ~/.code-reviewer/config.json (found)
+  Config (project): /repo/.code-reviewer/config.json (not found)
+  Auth:           none (not required)
+  API reachable:  ✓ (12ms)
+  Models:         deepseek-coder-v2, codellama:13b, qwen2.5-coder:7b
+```
+
+```
+$ copilot-review status --provider ollama
+
+  Provider:       ollama
+  ...
+  API reachable:  ✗ — connection refused at http://localhost:11434
+```
+
+Behavior:
+- Resolves the full config merge (defaults → env → global → project → CLI) and shows the result.
+- Shows which config files were found and which fell back or were missing.
+- For `model: auto`, resolves the auto-selection and shows both `auto → <resolved>`.
+- Pings the provider's API to confirm reachability (lightweight health check, not a full chat call).
+- For Ollama, lists discovered models when reachable.
+- Exits with code 0 if everything is healthy, 1 if any check fails (unreachable, missing required model, auth failure).
+- Accepts `--json` flag for machine-readable output (same data as structured JSON).
 
 ### Review Pipeline Change
 
@@ -474,7 +530,7 @@ No new error classes needed — all scenarios fit existing classes with new erro
 | `review.ts` | 208 | **Modify** — signature change, chunk routing added | Medium |
 | `types.ts` | 330 | **Modify** — ~30 lines added | Low |
 | `config.ts` | 262 | **Modify** — ~60 lines added | Medium |
-| `cli.ts` | ~220 | **Modify** — ~20 lines changed | Low |
+| `cli.ts` | ~220 | **Modify** — ~40 lines changed (new flags + status subcommand handler) | Low–Medium |
 | `mcp-server.ts` | ~100 | **Modify** — ~10 lines changed | Low |
 | `prompt.ts` | ~50 | **Modify** — ~40 lines added | Low |
 | `formatter.ts` | ~80 | **Modify** — ~15 lines added | Low |
@@ -511,6 +567,7 @@ No new error classes needed — all scenarios fit existing classes with new erro
 | `config.ts` | Env var precedence, new paths with fallback, new fields merge |
 | `review.ts` | Auto-chunk threshold, single-pass vs map-reduce routing, reduce receives findings not diffs, token sums |
 | `prompt.ts` | Chunk message assembly, reduce prompt assembly |
+| `cli.ts` (status) | Config resolution display, health check pass/fail, exit codes, JSON output |
 
 ### Chunking Edge Cases (must all be covered)
 
