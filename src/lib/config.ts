@@ -28,6 +28,9 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     prompt: loadBuiltInPrompt(),
     defaultBase: "main",
     ignorePaths: [],
+    provider: "copilot",
+    providerOptions: {},
+    chunking: "auto",
   };
 
   let currentMode: "extend" | "replace" = "extend";
