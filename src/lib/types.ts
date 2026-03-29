@@ -250,6 +250,12 @@ export interface ConfigFile {
   prompt?: string;
   defaultBase?: string;
   ignorePaths?: string[];
+  provider?: string;
+  providerOptions?: {
+    ollama?: { baseUrl?: string };
+    [key: string]: Record<string, unknown> | undefined;
+  };
+  chunking?: "auto" | "always" | "never";
 }
 
 /**
@@ -262,6 +268,12 @@ export interface ResolvedConfig {
   prompt: string;
   defaultBase: string;
   ignorePaths: string[];
+  provider: string;
+  providerOptions: {
+    ollama?: { baseUrl: string };
+    [key: string]: Record<string, unknown> | undefined;
+  };
+  chunking: "auto" | "always" | "never";
 }
 
 /**
@@ -273,6 +285,9 @@ export interface CLIOverrides {
   format?: OutputFormat;
   stream?: boolean;
   config?: string;
+  provider?: string;
+  chunking?: "auto" | "always" | "never";
+  ollamaUrl?: string;
 }
 
 // ============================================================================
