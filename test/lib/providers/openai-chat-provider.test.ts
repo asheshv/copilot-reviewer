@@ -272,7 +272,9 @@ describe("OpenAIChatProvider", () => {
 
     it("throws ModelError when model not found", async () => {
       const provider = new TestProvider();
-      await expect(provider.validateModel("nonexistent-model")).rejects.toThrow(ModelError);
+      const err = await provider.validateModel("missing-id").catch(e => e);
+      expect(err).toBeInstanceOf(ModelError);
+      expect(err.available).toEqual(expect.arrayContaining(["test-model-1", "test-model-2"]));
     });
   });
 
@@ -283,7 +285,7 @@ describe("OpenAIChatProvider", () => {
         http.post("http://test.api/chat/completions", () => {
           attemptCount++;
           if (attemptCount === 1) {
-            return new HttpResponse(null, { status: 429, headers: { "retry-after": "1" } });
+            return new HttpResponse(null, { status: 429 });
           }
           return HttpResponse.json({
             choices: [{ message: { role: "assistant", content: "ok" } }],

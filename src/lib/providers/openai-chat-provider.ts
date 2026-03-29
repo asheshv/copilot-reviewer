@@ -68,9 +68,10 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
     const start = Date.now();
 
     try {
-      await fetch(`${this.baseUrl}`, { signal: controller.signal });
+      const response = await fetch(`${this.baseUrl}`, { signal: controller.signal });
       clearTimeout(timeoutId);
-      return { ok: true, latencyMs: Date.now() - start };
+      const latencyMs = Date.now() - start;
+      return { ok: response.ok, latencyMs, error: response.ok ? undefined : `HTTP ${response.status}` };
     } catch (error) {
       clearTimeout(timeoutId);
       const message = error instanceof Error ? error.message : "unknown error";
@@ -195,6 +196,9 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
           return;
         }
         yield { type: "error", text: "Unknown stream error" };
+      } finally {
+        clearTimeout(timeoutId);
+        controller.abort();
       }
     } catch (error) {
       clearTimeout(timeoutId);
