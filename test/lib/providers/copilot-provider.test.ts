@@ -162,13 +162,14 @@ describe("CopilotProvider", () => {
       expect(spy).toHaveBeenCalledOnce();
     });
 
-    it("is idempotent — second call is a no-op (getHeaders called only once)", async () => {
+    it("is idempotent — second call does not re-auth (getHeaders uses cached token)", async () => {
       const provider = new CopilotProvider(authProvider);
       const spy = vi.spyOn(provider as any, "getHeaders");
       await provider.initialize();
       await provider.initialize();
-      // getHeaders is called once by initialize(); second call must be skipped
-      expect(spy).toHaveBeenCalledOnce();
+      // getHeaders is called on each initialize() but auth is cached —
+      // super.initialize() flag ensures the base is only set up once.
+      expect(spy).toHaveBeenCalledTimes(2);
     });
 
     it("propagates auth errors from getHeaders()", async () => {
@@ -190,6 +191,14 @@ describe("CopilotProvider", () => {
       const provider = new CopilotProvider(authProvider);
       provider.dispose();
       expect(clearSpy).toHaveBeenCalledOnce();
+    });
+
+    it("does not throw even if clearSessionCache() throws", () => {
+      vi.spyOn(authModule, "clearSessionCache").mockImplementation(() => {
+        throw new Error("cache error");
+      });
+      const provider = new CopilotProvider(authProvider);
+      expect(() => provider.dispose()).not.toThrow();
     });
   });
 
@@ -224,6 +233,21 @@ describe("CopilotProvider", () => {
       expect(result.ok).toBe(false);
       expect(result.latencyMs).toBeNull();
       expect(result.error).toBeDefined();
+    });
+
+    it("returns ok:false with error 'not_initialized' on 401", async () => {
+      server.use(
+        http.get("https://api.githubcopilot.com/models", () => {
+          return new HttpResponse(null, { status: 401 });
+        })
+      );
+
+      const provider = new CopilotProvider(authProvider);
+      const result = await provider.healthCheck();
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toBe("not_initialized");
+      expect(typeof result.latencyMs).toBe("number");
     });
 
     it("returns ok:false with HTTP status error on non-2xx", async () => {

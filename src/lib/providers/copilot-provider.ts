@@ -83,23 +83,24 @@ export class CopilotProvider extends OpenAIChatProvider {
   }
 
   /**
-   * Idempotent initialization. Calls getHeaders() once to validate auth eagerly.
+   * Idempotent initialization. Calls getHeaders() to validate auth eagerly.
+   * super.initialize() handles the idempotency flag; getHeaders() uses cached
+   * token on repeat calls so double-auth never occurs.
    */
-  async initialize(): Promise<void> {
-    // Delegate to base class for idempotency check
-    const wasInitialized = (this as any)._initialized as boolean;
+  override async initialize(): Promise<void> {
     await super.initialize();
-    if (!wasInitialized) {
-      // Eagerly validate auth
-      await this.getHeaders();
-    }
+    await this.getHeaders(); // validates auth; uses cached token on repeat calls
   }
 
   /**
-   * Zero out cached session token on dispose.
+   * Zero out cached session token on dispose. Must not throw.
    */
-  dispose(): void {
-    clearSessionCache();
+  override dispose(): void {
+    try {
+      clearSessionCache();
+    } catch {
+      // swallow — dispose must not throw
+    }
   }
 
   /**
@@ -117,6 +118,9 @@ export class CopilotProvider extends OpenAIChatProvider {
       });
       clearTimeout(timeoutId);
       const latencyMs = Date.now() - start;
+      if (response.status === 401) {
+        return { ok: false, latencyMs, error: "not_initialized" };
+      }
       return {
         ok: response.ok,
         latencyMs,
@@ -350,6 +354,7 @@ export class CopilotProvider extends OpenAIChatProvider {
       // Fallback trigger
       if (response.status === 404 || response.status === 400) {
         this._responsesFallback.set(request.model, true);
+        controller.abort(); // clean up — AbortController must not be abandoned
         yield* super.chatStream(request);
         return;
       }
