@@ -52,14 +52,26 @@ export interface ReviewProvider {
   autoSelect?(): Promise<string>;
 
   /**
+   * Release any resources held by this provider (cached tokens, open connections).
+   * Called when the provider is no longer needed — CLI exit, MCP server shutdown.
+   * Implementations that hold no state can be a no-op.
+   *   - CopilotProvider: clears cached session token
+   *   - OllamaProvider: no-op (stateless)
+   * Not called between individual review calls — providers are long-lived within a session.
+   */
+  dispose(): void;
+
+  /**
    * Health check — verify provider is reachable. Returns latency in ms.
    * Called only by the `status` command, never during normal review flow
    * (review errors surface through chat/chatStream naturally).
    * Implementations should use the lightest possible request:
    *   - Copilot: GET /models (already needed for validation)
    *   - Ollama: GET /api/tags (lightweight, returns quickly)
+   * Timeout: 5 seconds (hardcoded, not configurable). If the provider
+   * doesn't respond within 5s, return { ok: false, latencyMs: null, error: "timeout" }.
    */
-  healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }>;
+  healthCheck(): Promise<{ ok: boolean; latencyMs: number | null; error?: string }>;
 }
 ```
 
@@ -119,7 +131,27 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
 }
 ```
 
-Retry logic lives in the base class with a `shouldRetry(error)` method that subclasses can override for provider-specific behavior.
+Retry logic lives in the base class:
+
+```typescript
+// In OpenAIChatProvider:
+
+/** Max retries, backoff, jitter — same as current client.ts implementation */
+protected async retry<T>(fn: () => Promise<T>): Promise<T> { /* ... */ }
+
+/**
+ * Determine if an error is retryable. Subclasses override for provider-specific behavior.
+ * Default: retry on rate_limited (429), server_error (502/503/504), timeout.
+ */
+protected shouldRetry(error: ClientError): boolean {
+  return error.code === "rate_limited" ||
+         error.code === "server_error" ||
+         error.code === "timeout";
+}
+```
+
+- `CopilotProvider`: inherits default (same as current behavior) + retries on 403 with rate-limit headers.
+- `OllamaProvider`: overrides to also retry on `ECONNREFUSED` (Ollama may be starting up).
 
 ### CopilotProvider
 
@@ -135,8 +167,13 @@ export class CopilotProvider extends OpenAIChatProvider {
 
   // Overrides chat/chatStream to support Responses API
   // (routes based on model endpoint metadata, same as current code)
-  // Fallback: if Responses API returns 4xx, falls back to /chat/completions
-  // (same model, same request — only the body format changes)
+  //
+  // Responses API fallback criteria:
+  //   Primary: use /responses if model.endpoints includes "/responses"
+  //   Fallback: if /responses returns 404 or 400 (not 401/403/429),
+  //     retry once with /chat/completions (same model, different body format)
+  //   No fallback on: auth errors (401/403), rate limits (429), server errors (5xx)
+  //   Fallback is logged to stderr when verbose mode is enabled
 
   // listModels() — current ModelManager logic (filter, dedup, policy enable)
   // autoSelect() — current /models/session logic
@@ -157,7 +194,14 @@ export class OllamaProvider extends OpenAIChatProvider {
   }
 
   // getHeaders() — empty auth, Content-Type only
-  // listModels() — GET /api/tags → transform to ModelInfo[]
+  // listModels() — two-step discovery:
+  //   1. GET /api/tags → list of model names
+  //   2. For each model, POST /api/show { name } → extract context length
+  //      from modelfile parameters (num_ctx) or model metadata.
+  //      Fallback: if context length unavailable, default to 4096 tokens
+  //      (conservative — avoids overflowing small models).
+  //   Transform to ModelInfo[] with maxPromptTokens from discovered context length.
+  //   Cache results for 5 minutes (same TTL as Copilot).
   // No autoSelect — user must pick a model
   // chat/chatStream inherited — Ollama speaks /v1/chat/completions
 }
@@ -170,13 +214,23 @@ export class OllamaProvider extends OpenAIChatProvider {
 
 ```typescript
 // In OllamaProvider constructor:
-const parsed = new URL(baseUrl);
+let parsed: URL;
+try {
+  parsed = new URL(baseUrl);
+} catch {
+  throw new ConfigError("invalid_url",
+    `Invalid Ollama base URL '${baseUrl}'. Expected format: http://host:port`,
+    baseUrl, false);
+}
 if (parsed.pathname !== "/" && parsed.pathname !== "") {
   throw new ConfigError("invalid_url",
     `Ollama base URL must not include a path (got '${parsed.pathname}'). Use the root URL, e.g., http://localhost:11434`,
     baseUrl, false);
 }
-this.baseUrl = `${parsed.protocol}//${parsed.host}`;  // normalized, no trailing path
+// parsed.host includes port when non-default (e.g., "localhost:11434")
+// parsed.host omits port when it's the protocol default (e.g., "localhost" for http on 80)
+// This is correct — we want the full host:port.
+this.baseUrl = `${parsed.protocol}//${parsed.host}`;
 ```
 
 ### Provider Factory
@@ -203,12 +257,24 @@ export function createProvider(config: ResolvedConfig): ReviewProvider {
     const available = Object.keys(PROVIDERS).join(", ");
     throw new ConfigError(
       "unknown_provider",
-      `Unknown provider '${config.provider}'. Available: ${available}`,
-      "config",
+      `Unknown provider '${config.provider}'. Available: ${available}. Check your config file or --provider flag.`,
+      config.provider,   // include the source that resolved this value
       false
     );
   }
-  return factory(config);
+  try {
+    return factory(config);
+  } catch (error) {
+    // Wrap provider construction errors with context about which provider failed
+    if (error instanceof ConfigError) throw error;
+    throw new ConfigError(
+      "provider_init_failed",
+      `Failed to initialize provider '${config.provider}': ${error instanceof Error ? error.message : String(error)}`,
+      config.provider,
+      false,
+      error instanceof Error ? error : undefined
+    );
+  }
 }
 
 /** List registered provider names (used by status command, --help, etc.) */
@@ -257,20 +323,36 @@ New paths:
 
 Backward compatibility: if the new path does not exist, silently fall back to the old path (`~/.copilot-review/`). No warnings emitted. New path takes precedence if both exist.
 
-**Migration risk assessment:** We considered the risk of silent shadowing when both `~/.code-reviewer/` and `~/.copilot-review/` exist. The precedence rule (new path wins) is deterministic, but a user who manually edits the old path after the new one was auto-created could be confused. For v1, we accept this risk — the `status` command will show exactly which config file is loaded, making debugging straightforward. A future migration tool or deprecation warning is out of scope but documented in Section 9.
+**Migration risk assessment:** We considered the risk of silent config loss when both `~/.code-reviewer/` and `~/.copilot-review/` exist. The precedence rule (new path wins) is deterministic, but a user who manually edits the old path after the new one was auto-created would see their changes ignored without any feedback.
+
+Mitigations:
+- The `status` command shows exactly which config file is loaded and whether the fallback path exists, making debugging straightforward.
+- The tool **never auto-creates** config directories — users create them explicitly. This eliminates the "auto-created new path shadows old path" scenario.
+- If both paths exist, the `status` command shows: `Config (global): ~/.code-reviewer/config.json (found, note: ~/.copilot-review/config.json also exists — ignored)`.
+
+A future migration tool or deprecation warning is out of scope but documented in Section 9.
 
 ### Config Merge Order (updated)
 
 ```
-1. Built-in defaults          provider: "copilot", chunking: "auto"
-2. CODEREVIEWER_PROVIDER env  provider override only
-3. CODEREVIEWER_OLLAMA_URL    providerOptions.ollama.baseUrl override
-4. Global config              ~/.code-reviewer/config.json (fallback: ~/.copilot-review/)
-5. Project config             <git-root>/.code-reviewer/config.json (fallback: .copilot-review/)
-6. CLI overrides              --provider, --chunking, --ollama-url, --model, etc.
+Layer  Source                         Fields affected
+─────  ─────────────────────────────  ───────────────────────────────────────────────
+1      Built-in defaults              all fields (provider: "copilot", model: "auto",
+                                      format: "markdown", stream: true, chunking: "auto",
+                                      prompt: built-in, defaultBase: "main", ignorePaths: [])
+2      CODEREVIEWER_PROVIDER env      provider only
+3      CODEREVIEWER_OLLAMA_URL env    providerOptions.ollama.baseUrl only
+4      Global config file             all ConfigFile fields (provider, model, format,
+       ~/.code-reviewer/config.json   stream, prompt, defaultBase, ignorePaths, chunking,
+       (fallback: ~/.copilot-review/) providerOptions, mode)
+5      Project config file            same as layer 4
+       <git-root>/.code-reviewer/
+       (fallback: .copilot-review/)
+6      CLI overrides                  --provider, --model, --format, --stream/--no-stream,
+                                      --prompt, --chunking, --ollama-url, --config
 ```
 
-Environment variables slot between defaults and config files — config files can override them, CLI always wins.
+Environment variables slot between defaults and config files — config files can override them, CLI always wins. Each layer only overrides fields it explicitly sets; unset fields pass through from the previous layer.
 
 ### CLI Additions
 
@@ -427,11 +509,18 @@ Step 3: Bin-pack files into chunks (first-fit decreasing)
     perFileOverhead    = 10 tokens   (per file in the chunk: path listing)
     chunkBudget        = maxPromptTokens - systemPromptTokens - messageFraming
 
-  "Fits" definition:
+  "Fits" definition (uses strict less-than to leave headroom for token estimation error):
     A file fits in a chunk when:
-      currentChunkTokens + fileTokens + (perFileOverhead * filesInChunk) <= chunkBudget
+      currentChunkTokens + fileTokens + (perFileOverhead * (filesInChunk + 1)) < chunkBudget
+    Note: filesInChunk + 1 because we're testing whether adding this file would fit.
+    The < (not <=) gives a small safety margin for the char/4 token estimation inaccuracy.
 
-  Algorithm (first-fit decreasing):
+  Algorithm: First-Fit Decreasing (FFD).
+    Why FFD over Best-Fit Decreasing (BFD): FFD is simpler to implement, produces
+    deterministic output, and for our use case (typically 5-50 files) the packing
+    efficiency difference is negligible. BFD's tighter packing would add complexity
+    for minimal gain — we're optimizing for review quality, not minimal chunk count.
+
     Sort files by token estimate, largest first (stable sort).
     Tie-breaking for equal token estimates: alphabetical by path (deterministic, reproducible output).
     For each file:
@@ -442,7 +531,12 @@ Step 3: Bin-pack files into chunks (first-fit decreasing)
 Step 4: Hunk-level fallback (rare — massive single files only)
   Split the file's diff by @@ hunk headers.
   Bin-pack hunks into chunks the same way.
-  If a single hunk exceeds budget → truncate with warning.
+  If a single hunk exceeds budget → truncate:
+    - Keep the first `chunkBudget * 4` characters of the hunk content
+    - Append: `\n... [truncated — {originalTokens} tokens reduced to {budgetTokens}. Full hunk too large for model context.]\n`
+    - Preserve the @@ header line (so the model knows the file/line context)
+    - Emit warning to stderr: `"Warning: hunk in {filePath} at line {startLine} truncated ({originalTokens} tokens exceeds {budgetTokens} budget). Consider reviewing this file separately with a larger-context model, or use ignorePaths to exclude it."`
+    - The truncated hunk is placed in its own chunk (no other files added)
 ```
 
 ### Three-Phase Pipeline
@@ -496,7 +590,7 @@ The reduce pass sees **findings only**, not raw diffs — so it fits in the toke
 
 Uses the same model as the map passes — the resolved `ModelInfo` from the initial model resolution step is reused for all map passes and the reduce pass. No second auto-select call is made. Independently configurable reduce model is deferred to a future enhancement.
 
-If only one chunk was produced (diff fit in a single chunk after all), the reduce pass is **skipped** — no aggregation needed.
+If only one chunk was produced (diff fit in a single chunk after all), the reduce pass is **skipped** — no aggregation needed. This applies even when `chunking: "always"` — if the diff only produces one chunk, the reduce pass adds no value. The `chunking: "always"` flag forces the chunking *pipeline* to run (bin-packing, chunk message format), but does not force a reduce pass when there's nothing to aggregate.
 
 **Reduce pass token budget calculation:**
 
@@ -514,7 +608,15 @@ reduceBudget = maxPromptTokens * 0.9   (leave 10% headroom for the model)
 The reduce input can overflow in pathological cases — e.g., 50 chunks each producing 2000 tokens of findings = 100k tokens. Strategy uses **severity-aware truncation** to preserve high-priority findings:
 
 1. Calculate available space: `available = reduceBudget - reducePromptTokens - framingOverhead`
-2. For each chunk's findings, split into severity tiers by scanning for `### HIGH`, `### MEDIUM`, `### LOW` markers:
+2. For each chunk's findings, split into severity tiers by scanning for severity markers.
+   Parser recognizes multiple formats to handle model output variance:
+   - `### HIGH` / `### MEDIUM` / `### LOW` (default prompt format)
+   - `[HIGH]` / `[MEDIUM]` / `[LOW]` (inline tag format)
+   - `**HIGH**` / `**MEDIUM**` / `**LOW**` (bold format)
+   - Case-insensitive matching (e.g., `### High` also matches)
+   - Content before the first severity marker is treated as preamble (Tier 2 — MEDIUM).
+   - If no severity markers found in a chunk's findings at all, treat entire chunk as Tier 2 (MEDIUM) — do not discard.
+   Tiers:
    - **Tier 1 (preserve):** HIGH findings — never truncated
    - **Tier 2 (compress):** MEDIUM findings — truncated last
    - **Tier 3 (expendable):** LOW findings — truncated first
@@ -574,8 +676,8 @@ interface ChunkedReviewResult extends ReviewResult {
 
 For `stream: true` with chunking enabled:
 
-- **Map phase**: always **buffered** (non-streaming) — each chunk is a complete `provider.chat()` call. Between chunks, emit progress markers to stderr: `"Reviewing chunk 2/5 (auth.ts, middleware.ts)..."`. Buffering the map phase is necessary because findings must be fully collected before the reduce pass.
-- **Reduce phase**: **streamed** via `provider.chatStream()` — the final aggregated output streams to stdout as it arrives.
+- **Map phase**: always **buffered** (non-streaming) — each chunk is a complete `provider.chat()` call. Between chunks, emit progress markers to **stderr only**: `"Reviewing chunk 2/5 (auth.ts, middleware.ts)..."`. Buffering the map phase is necessary because findings must be fully collected before the reduce pass. No output to stdout during map phase.
+- **Reduce phase**: **streamed** via `provider.chatStream()` — the final aggregated output streams to **stdout**. No stderr progress during reduce streaming (to avoid interleaving). A single stderr line before reduce starts: `"Aggregating findings..."`.
 - **Mid-file hunk splits**: when a file is split across chunks at hunk boundaries, each chunk's progress marker includes the file path with a `(partial)` suffix: `"Reviewing chunk 3/5 (large-file.ts (partial), utils.ts)..."`
 
 **Non-streaming chunked mode** (`stream: false`):
@@ -592,7 +694,7 @@ All phases (map + reduce) use `provider.chat()` (buffered). Progress markers sti
 | All files fit in 1 chunk | 1 chunk → skip reduce pass |
 | 10 files, need 3 chunks | 3 map passes + 1 reduce |
 | Reduce input exceeds budget | Truncate oldest chunk findings with warning |
-| Provider error on chunk N | Fail entire review: "Review failed on chunk {n}/{total} (files: [...]): {cause}". No partial results. |
+| Provider error on chunk N | Each chunk call uses the provider's built-in retry logic (exponential backoff). If retries exhausted, fail entire review: "Review failed on chunk {n}/{total} (files: [...]): {cause}". No partial results, no resume. Rationale: partial results without reduce aggregation are misleading — the user might think the review is complete. |
 | Empty chunk findings | Include in reduce with note "no issues found in chunk N" |
 | Single hunk exceeds budget | Truncate hunk with warning, continue review |
 
@@ -654,7 +756,10 @@ src/lib/
 
 ```
 src/lib/
-├── review.ts       # Signature change (provider replaces client+models), chunk routing
+├── review.ts       # Signature change (provider replaces client+models), chunk routing:
+                    #   review() → resolveModel() → shouldChunk() decision →
+                    #     if single-pass: singlePassReview() (existing logic, minor signature change)
+                    #     if chunked: chunkDiff() → mapReview() → reduceReview() → format()
 ├── types.ts        # New config fields, ChunkedReviewResult (~30 lines added)
 ├── config.ts       # Env var layer, new fields, new config paths + fallback (~60 lines added)
 ├── prompt.ts       # Chunk message + reduce prompt assembly (~40 lines added)
@@ -695,7 +800,7 @@ src/lib/
 | Ollama model not found | `ModelError` | `model_not_found` | "Model '{id}' not found on Ollama. Run `copilot-review models --provider ollama` to see available models." |
 | No model specified, provider lacks auto-select | `ConfigError` | `model_required` | "Provider '{name}' requires an explicit model. Use --model or set in config." |
 | Chunk N fails | `ReviewError` | `chunk_failed` | "Review failed on chunk {n}/{total} (files: [...]): {cause}" |
-| Reduce pass fails | `ReviewError` | `reduce_failed` | "Aggregation pass failed: {cause}" |
+| Reduce pass fails | `ReviewError` | `reduce_failed` | "Aggregation pass failed: {cause}". Since map-phase findings were already collected, include them as a fallback: concatenate raw chunk findings with chunk headers (same format as reduce input) and emit warning: "Aggregation failed — showing raw per-chunk findings instead." This is better than losing all work. |
 | Single hunk exceeds budget | Warning | — | Truncate hunk, continue with warning |
 
 No new error classes needed — all scenarios fit existing classes with new error codes.
@@ -781,13 +886,35 @@ The `ReviewProvider` interface simplifies test mocking compared to the current s
 class MockProvider implements ReviewProvider {
   readonly name = "mock";
   chatResponse: ChatResponse = { content: "No issues.", model: "mock", usage: { totalTokens: 10 } };
-  models: ModelInfo[] = [{ id: "mock-model", name: "Mock", ... }];
+  models: ModelInfo[] = [{ id: "mock-model", name: "Mock", endpoints: ["/chat/completions"],
+    streaming: true, toolCalls: false, maxPromptTokens: 128000, maxOutputTokens: 4096, tokenizer: "mock" }];
 
-  async chat(req: ChatRequest): Promise<ChatResponse> { return this.chatResponse; }
-  async *chatStream(req: ChatRequest): AsyncIterable<StreamChunk> { yield { type: "done", usage: { totalTokens: 10 } }; }
+  // Track calls for assertions
+  chatCalls: ChatRequest[] = [];
+
+  async chat(req: ChatRequest): Promise<ChatResponse> {
+    this.chatCalls.push(req);
+    return this.chatResponse;
+  }
+
+  async *chatStream(req: ChatRequest): AsyncIterable<StreamChunk> {
+    this.chatCalls.push(req);
+    // Simulate realistic streaming: multiple content chunks then done
+    const words = this.chatResponse.content.split(" ");
+    for (const word of words) {
+      yield { type: "content", text: word + " " };
+    }
+    yield { type: "done", usage: this.chatResponse.usage, model: this.chatResponse.model };
+  }
+
   async listModels(): Promise<ModelInfo[]> { return this.models; }
-  async validateModel(id: string): Promise<ModelInfo> { return this.models[0]; }
+  async validateModel(id: string): Promise<ModelInfo> {
+    const m = this.models.find(m => m.id === id);
+    if (!m) throw new ModelError("model_not_found", `Model '${id}' not found`, false);
+    return m;
+  }
   async healthCheck() { return { ok: true, latencyMs: 1 }; }
+  dispose(): void { /* no-op */ }
 }
 ```
 
