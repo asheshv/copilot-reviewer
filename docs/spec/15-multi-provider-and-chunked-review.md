@@ -51,7 +51,14 @@ export interface ReviewProvider {
   /** Auto-select best model (optional — not all providers support this) */
   autoSelect?(): Promise<string>;
 
-  /** Health check — verify provider is reachable. Returns latency in ms. */
+  /**
+   * Health check — verify provider is reachable. Returns latency in ms.
+   * Called only by the `status` command, never during normal review flow
+   * (review errors surface through chat/chatStream naturally).
+   * Implementations should use the lightest possible request:
+   *   - Copilot: GET /models (already needed for validation)
+   *   - Ollama: GET /api/tags (lightweight, returns quickly)
+   */
   healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }>;
 }
 ```
@@ -72,7 +79,9 @@ ReviewProvider (interface)
   ├── OpenAIChatProvider (abstract base class — shared OpenAI-compatible protocol)
   │     ├── CopilotProvider (Copilot auth, session exchange, Responses API, auto-select)
   │     └── OllamaProvider (no auth, localhost default, /api/tags discovery)
-  └── (future: AnthropicProvider, etc. — implement interface directly)
+  └── (future: AnthropicProvider, etc. — implement ReviewProvider directly, not via OpenAIChatProvider.
+  │    These providers use non-OpenAI protocols and need their own request/response mapping.
+  │    The ReviewProvider interface is deliberately protocol-agnostic to support this.)
 ```
 
 ### OpenAIChatProvider (base class)
@@ -126,6 +135,8 @@ export class CopilotProvider extends OpenAIChatProvider {
 
   // Overrides chat/chatStream to support Responses API
   // (routes based on model endpoint metadata, same as current code)
+  // Fallback: if Responses API returns 4xx, falls back to /chat/completions
+  // (same model, same request — only the body format changes)
 
   // listModels() — current ModelManager logic (filter, dedup, policy enable)
   // autoSelect() — current /models/session logic
@@ -152,14 +163,19 @@ export class OllamaProvider extends OpenAIChatProvider {
 }
 ```
 
-**URL validation:** The `OllamaProvider` constructor normalizes the base URL:
-- Strip trailing slashes (`http://localhost:11434/` → `http://localhost:11434`)
+**URL validation:** The `OllamaProvider` constructor normalizes and validates the base URL:
 - Validate it parses as a URL (`new URL(baseUrl)` — throws `ConfigError` if invalid)
-- No path appended — must be the root (e.g., `http://host:port`, not `http://host:port/v1`)
+- Strip trailing slashes (`http://localhost:11434/` → `http://localhost:11434`)
+- **Reject non-root paths** — if `parsed.pathname` is anything other than `/`, throw `ConfigError`: "Ollama base URL must not include a path (got '{pathname}'). Use the root URL, e.g., http://localhost:11434". This prevents common mistakes like passing `http://localhost:11434/v1` (the provider appends `/v1/chat/completions` internally).
 
 ```typescript
 // In OllamaProvider constructor:
 const parsed = new URL(baseUrl);
+if (parsed.pathname !== "/" && parsed.pathname !== "") {
+  throw new ConfigError("invalid_url",
+    `Ollama base URL must not include a path (got '${parsed.pathname}'). Use the root URL, e.g., http://localhost:11434`,
+    baseUrl, false);
+}
 this.baseUrl = `${parsed.protocol}//${parsed.host}`;  // normalized, no trailing path
 ```
 
@@ -343,7 +359,7 @@ interface StatusOutput {
     latencyMs: number | null;
     error?: string;
   };
-  models?: string[];              // discovered model IDs, present when API reachable
+  models: string[] | null;        // discovered model IDs when API reachable, null when unreachable or discovery failed
   healthy: boolean;               // overall: true if all checks pass
 }
 ```
@@ -369,13 +385,22 @@ review(options, provider);
 
 ```
 chunking = "auto" (default):
-  estimate tokens = (systemPrompt.length + diff.raw.length) / 4
-  if estimate < 80% of model maxPromptTokens → single pass (current behavior)
-  if estimate >= 80% → chunk and map-reduce
+  1. Resolve the model first (auto-select or explicit) → get ModelInfo with maxPromptTokens
+  2. estimate tokens = (systemPrompt.length + diff.raw.length) / 4
+  3. if estimate < 80% of resolved model's maxPromptTokens → single pass (current behavior)
+     if estimate >= 80% → chunk and map-reduce
 
-chunking = "always":  → always chunk, even small diffs
+chunking = "always":  → always chunk, even small diffs (still resolves model first for budget)
+                         Useful for: testing chunking behavior, or when you want consistent
+                         multi-pass review quality regardless of diff size
 chunking = "never":   → current behavior, throw ReviewError if diff too large
+                         Useful for: CI pipelines where you want a hard fail on oversized diffs
+                         rather than silent degradation via chunking
 ```
+
+**Important:** The 80% threshold is always evaluated against the **resolved** model's `maxPromptTokens`, never against `model: "auto"`. Model resolution (auto-select or explicit validation) must complete before the chunking decision is made. This is the same ordering as the current pipeline — `resolveModel()` runs before `checkTokenBudget()`.
+
+**Expected behavior:** With modern models (128k+ context), the vast majority of reviews (~70-80% for typical PRs) will fit in a single pass. Chunking primarily benefits large refactors, dependency updates, or reviews against smaller-context local models (e.g., Ollama with 8k-32k models). The `chunking: "auto"` default ensures zero overhead for the common case.
 
 ### Diff Splitting
 
@@ -385,6 +410,12 @@ The unit of chunking is a **file**. A single file is never split across chunks u
 Step 1: Split raw diff into per-file segments
   Parse unified diff by "diff --git" boundaries.
   Result: Map<filePath, { raw: string, file: FileChange }>
+
+  Hunk header parsing must handle all unified diff variants:
+    @@ -10,5 +10,8 @@    — standard modified file
+    @@ -0,0 +1,45 @@     — newly added file (no old content)
+    @@ -1,45 +0,0 @@     — deleted file (no new content)
+    @@ -1 +1 @@           — single-line change (count omitted = 1)
 
 Step 2: Estimate tokens per file
   tokens ≈ segment.length / 4
@@ -401,8 +432,8 @@ Step 3: Bin-pack files into chunks (first-fit decreasing)
       currentChunkTokens + fileTokens + (perFileOverhead * filesInChunk) <= chunkBudget
 
   Algorithm (first-fit decreasing):
-    Sort files by token estimate, largest first.
-    Tie-breaking: alphabetical by path (deterministic output).
+    Sort files by token estimate, largest first (stable sort).
+    Tie-breaking for equal token estimates: alphabetical by path (deterministic, reproducible output).
     For each file:
       if file fits in current chunk → add it
       if file doesn't fit and current chunk is non-empty → seal chunk, start new one
@@ -463,7 +494,7 @@ User message:
 
 The reduce pass sees **findings only**, not raw diffs — so it fits in the token budget even for large reviews.
 
-Uses the same model as the map passes. Independently configurable reduce model is deferred to a future enhancement.
+Uses the same model as the map passes — the resolved `ModelInfo` from the initial model resolution step is reused for all map passes and the reduce pass. No second auto-select call is made. Independently configurable reduce model is deferred to a future enhancement.
 
 If only one chunk was produced (diff fit in a single chunk after all), the reduce pass is **skipped** — no aggregation needed.
 
@@ -480,16 +511,21 @@ reduceBudget = maxPromptTokens * 0.9   (leave 10% headroom for the model)
 
 **Overflow handling** (when `totalReduceInput > reduceBudget`):
 
-The reduce input can overflow in pathological cases — e.g., 50 chunks each producing 2000 tokens of findings = 100k tokens. Strategy:
+The reduce input can overflow in pathological cases — e.g., 50 chunks each producing 2000 tokens of findings = 100k tokens. Strategy uses **severity-aware truncation** to preserve high-priority findings:
 
 1. Calculate available space: `available = reduceBudget - reducePromptTokens - framingOverhead`
-2. Per-chunk allowance: `perChunk = floor(available / numChunks)`
-3. For each chunk's findings:
-   - If `findings.length / 4 <= perChunk` → include in full
-   - If exceeds → truncate to `perChunk * 4` characters with suffix: `\n[Truncated — {original} tokens reduced to {perChunk} tokens]`
-4. Emit warning: `"Reduce pass: truncated findings from {n} chunks to fit token budget"`
+2. For each chunk's findings, split into severity tiers by scanning for `### HIGH`, `### MEDIUM`, `### LOW` markers:
+   - **Tier 1 (preserve):** HIGH findings — never truncated
+   - **Tier 2 (compress):** MEDIUM findings — truncated last
+   - **Tier 3 (expendable):** LOW findings — truncated first
+3. Truncation rounds (stop as soon as total fits within `available`):
+   - **Round 1:** Remove LOW findings from all chunks, replace with `[{n} LOW findings omitted]`
+   - **Round 2:** Truncate MEDIUM findings proportionally across chunks (keep first paragraph of each, drop suggestion blocks)
+   - **Round 3:** If still over budget, truncate MEDIUM findings to one-line summaries
+   - **Round 4 (last resort):** Proportional truncation of remaining content per chunk
+4. Emit warning: `"Reduce pass: truncated findings to fit token budget (preserved all HIGH, {n} MEDIUM compressed, {m} LOW omitted)"`
 
-This ensures the reduce pass always fits, degrading gracefully by proportionally trimming verbose findings.
+This ensures HIGH findings are never lost. In the pathological case where HIGH findings alone exceed the budget, fall back to proportional truncation across all content with a warning.
 
 **Phase 3: FORMAT — Same as current**
 
@@ -541,6 +577,10 @@ For `stream: true` with chunking enabled:
 - **Map phase**: always **buffered** (non-streaming) — each chunk is a complete `provider.chat()` call. Between chunks, emit progress markers to stderr: `"Reviewing chunk 2/5 (auth.ts, middleware.ts)..."`. Buffering the map phase is necessary because findings must be fully collected before the reduce pass.
 - **Reduce phase**: **streamed** via `provider.chatStream()` — the final aggregated output streams to stdout as it arrives.
 - **Mid-file hunk splits**: when a file is split across chunks at hunk boundaries, each chunk's progress marker includes the file path with a `(partial)` suffix: `"Reviewing chunk 3/5 (large-file.ts (partial), utils.ts)..."`
+
+**Non-streaming chunked mode** (`stream: false`):
+
+All phases (map + reduce) use `provider.chat()` (buffered). Progress markers still emit to stderr between chunks. The final formatted result is returned as a single `ReviewResult` — same shape as the current single-pass buffered review. The caller (CLI/MCP) sees no difference in the return type, only in the stderr progress output and potentially richer token accounting.
 
 ### Edge Cases
 
@@ -652,13 +692,15 @@ src/lib/
 |----------|-------------|------|---------|
 | Unknown provider name | `ConfigError` | `unknown_provider` | "Unknown provider '{name}'. Available: copilot, ollama" |
 | Ollama unreachable | `ClientError` | `provider_unavailable` | "Cannot reach Ollama at {url}. Is it running?" |
-| Ollama model not found | `ModelError` | `model_not_found` | Same as current — lists available models |
+| Ollama model not found | `ModelError` | `model_not_found` | "Model '{id}' not found on Ollama. Run `copilot-review models --provider ollama` to see available models." |
 | No model specified, provider lacks auto-select | `ConfigError` | `model_required` | "Provider '{name}' requires an explicit model. Use --model or set in config." |
 | Chunk N fails | `ReviewError` | `chunk_failed` | "Review failed on chunk {n}/{total} (files: [...]): {cause}" |
 | Reduce pass fails | `ReviewError` | `reduce_failed` | "Aggregation pass failed: {cause}" |
 | Single hunk exceeds budget | Warning | — | Truncate hunk, continue with warning |
 
 No new error classes needed — all scenarios fit existing classes with new error codes.
+
+**Actionable messages principle:** Every user-facing error message must include a concrete next step. "Cannot reach Ollama" is insufficient — "Cannot reach Ollama at http://localhost:11434. Is Ollama running? Start it with `ollama serve`." gives the user a path forward. This applies to all providers, not just Ollama.
 
 ### Retry Behavior Per Provider
 
@@ -729,6 +771,27 @@ No new error classes needed — all scenarios fit existing classes with new erro
 6. One hunk exceeds budget → truncate with warning
 7. Files sorted largest-first → verify bin-packing efficiency
 ```
+
+### Test Mocking Patterns
+
+The `ReviewProvider` interface simplifies test mocking compared to the current setup (which requires mocking both `CopilotClient` and `ModelManager`):
+
+```typescript
+// Test helper: create a mock provider for unit tests
+class MockProvider implements ReviewProvider {
+  readonly name = "mock";
+  chatResponse: ChatResponse = { content: "No issues.", model: "mock", usage: { totalTokens: 10 } };
+  models: ModelInfo[] = [{ id: "mock-model", name: "Mock", ... }];
+
+  async chat(req: ChatRequest): Promise<ChatResponse> { return this.chatResponse; }
+  async *chatStream(req: ChatRequest): AsyncIterable<StreamChunk> { yield { type: "done", usage: { totalTokens: 10 } }; }
+  async listModels(): Promise<ModelInfo[]> { return this.models; }
+  async validateModel(id: string): Promise<ModelInfo> { return this.models[0]; }
+  async healthCheck() { return { ok: true, latencyMs: 1 }; }
+}
+```
+
+For `OpenAIChatProvider` base class testing, use a concrete test subclass with `msw` for HTTP mocking (same pattern as current `client.test.ts`). This tests the shared protocol logic without coupling to Copilot or Ollama specifics.
 
 ### Integration Tests (Ollama)
 
