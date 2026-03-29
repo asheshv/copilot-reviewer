@@ -35,6 +35,7 @@ The CLI is the engine; the MCP server is the interface layer. Both import a shar
 | [12](./12-default-prompt.md) | Default Prompt | Review prompt, priorities, output format, rules |
 | [13](./13-testing.md) | Testing | Strategy, mocking, fixtures, E2E approach |
 | [14](./14-future.md) | Future Enhancements | Documented but not built |
+| [15](./15-multi-provider-and-chunked-review.md) | Multi-Provider & Chunked Review | Provider abstraction (Copilot, Ollama), map-reduce chunking |
 
 ## Related Documents
 
