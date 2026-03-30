@@ -312,9 +312,10 @@ function applyRound4(chunks: string[], availableChars: number): { chunks: string
     let inHigh = false;
     for (const line of lines) {
       const trimmed = line.trim();
-      if (/^(###\s+HIGH|\[HIGH\]|\*\*HIGH\*\*)(\s|$)/i.test(trimmed)) {
+      // Match colon-suffixed forms too (e.g., "### HIGH: title") — consistent with lineMarkerSeverity()
+      if (/^(###\s+HIGH|\[HIGH\]|\*\*HIGH\*\*)(\s|:|$)/i.test(trimmed)) {
         inHigh = true;
-      } else if (/^(###\s+(MEDIUM|LOW)|\[(MEDIUM|LOW)\]|\*\*(MEDIUM|LOW)\*\*)(\s|$)/i.test(trimmed)) {
+      } else if (/^(###\s+(MEDIUM|LOW)|\[(MEDIUM|LOW)\]|\*\*(MEDIUM|LOW)\*\*)(\s|:|$)/i.test(trimmed)) {
         inHigh = false;
       }
       if (inHigh) highLines.push(line);
