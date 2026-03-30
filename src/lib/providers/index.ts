@@ -21,7 +21,7 @@ export async function createProvider(config: ResolvedConfig): Promise<ReviewProv
     throw new ConfigError(
       "unknown_provider",
       `Unknown provider '${config.provider}'. Available: ${available}. Check your config file or --provider flag.`,
-      config.provider,
+      "",
       false
     );
   }
@@ -34,7 +34,7 @@ export async function createProvider(config: ResolvedConfig): Promise<ReviewProv
     throw new ConfigError(
       "provider_init_failed",
       `Failed to initialize provider '${config.provider}': ${error instanceof Error ? error.message : String(error)}`,
-      config.provider,
+      "",
       false,
       error instanceof Error ? error : undefined
     );
