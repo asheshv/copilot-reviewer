@@ -1,6 +1,14 @@
 // src/lib/formatter.ts
 
-import type { ReviewResult, OutputFormat, StreamChunk } from "./types.js";
+import type { ReviewResult, ChunkedReviewResult, OutputFormat, StreamChunk } from "./types.js";
+
+function isChunked(result: ReviewResult): result is ChunkedReviewResult {
+  return "chunked" in result && result.chunked === true;
+}
+
+function isUnaggregated(content: string): boolean {
+  return content.startsWith("⚠ Aggregation failed");
+}
 
 /**
  * Format review result according to the specified output format.
@@ -42,9 +50,15 @@ function formatMarkdown(result: ReviewResult): string {
   const { model, diff, content, usage } = result;
   const { filesChanged, insertions, deletions } = diff.stats;
 
+  let chunkSuffix = "";
+  if (isChunked(result)) {
+    const unaggregated = isUnaggregated(content) ? " (unaggregated)" : "";
+    chunkSuffix = ` | **Chunks:** ${result.chunks.length}${unaggregated}`;
+  }
+
   const header = `# Copilot Code Review
 
-**Model:** ${model} | **Files:** ${filesChanged} | **+${insertions} -${deletions}**
+**Model:** ${model} | **Files:** ${filesChanged} | **+${insertions} -${deletions}**${chunkSuffix}
 
 ## Findings
 
@@ -65,8 +79,14 @@ function formatText(result: ReviewResult): string {
   const { model, diff, content, usage } = result;
   const { filesChanged, insertions, deletions } = diff.stats;
 
+  let chunkSuffix = "";
+  if (isChunked(result)) {
+    const unaggregated = isUnaggregated(content) ? " (unaggregated)" : "";
+    chunkSuffix = ` | Chunks: ${result.chunks.length}${unaggregated}`;
+  }
+
   const header = `Copilot Code Review
-Model: ${model} | Files: ${filesChanged} | +${insertions} -${deletions}
+Model: ${model} | Files: ${filesChanged} | +${insertions} -${deletions}${chunkSuffix}
 
 `;
 
@@ -85,11 +105,21 @@ Tokens used: ${formatNumber(usage.totalTokens)}`;
 function formatJson(result: ReviewResult): string {
   const { content, model, usage, diff, warnings } = result;
 
+  let usageOutput: Record<string, unknown> = { ...usage };
+  if (isChunked(result)) {
+    const mapTokens = result.chunks.reduce((sum, c) => sum + c.usage.totalTokens, 0);
+    const reduceTokens = result.reduceUsage.totalTokens;
+    usageOutput = {
+      ...usage,
+      chunkedBreakdown: { mapTokens, reduceTokens, chunks: result.chunks.length },
+    };
+  }
+
   const output = {
     review: {
       content,
       model,
-      usage,
+      usage: usageOutput,
     },
     diff: {
       filesChanged: diff.stats.filesChanged,
