@@ -1,6 +1,6 @@
 // test/lib/review.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { review, reviewStream } from "../../src/lib/review.js";
+import { review, reviewStream, shouldChunk } from "../../src/lib/review.js";
 import type {
   ReviewOptions,
   DiffResult,
@@ -9,6 +9,7 @@ import type {
   StreamChunk,
   ResolvedConfig,
   ChatRequest,
+  ChunkedReviewResult,
 } from "../../src/lib/types.js";
 import { DiffError, ReviewError } from "../../src/lib/types.js";
 import type { ReviewProvider } from "../../src/lib/providers/types.js";
@@ -20,6 +21,24 @@ vi.mock("../../src/lib/diff.js", () => ({
 
 vi.mock("../../src/lib/prompt.js", () => ({
   assembleUserMessage: vi.fn((diff) => `Review the following changes.\n\n## Summary\nFiles changed: ${diff.stats.filesChanged}\nInsertions: +${diff.stats.insertions}, Deletions: -${diff.stats.deletions}\n\n## Diff\n\`\`\`diff\n${diff.raw}\n\`\`\``),
+  assembleChunkMessage: vi.fn((_i, _total, segs, _manifest) => `chunk message for ${segs.map((s: { path: string }) => s.path).join(",")}`),
+  assembleReduceMessage: vi.fn(() => "reduce message"),
+  assembleFileManifest: vi.fn(() => "file manifest"),
+  extractHunkRanges: vi.fn(() => new Map()),
+  getReduceSystemPrompt: vi.fn(() => "You are a code review aggregator."),
+}));
+
+vi.mock("../../src/lib/chunking.js", () => ({
+  splitDiffByFile: vi.fn(),
+  binPackFiles: vi.fn(),
+}));
+
+vi.mock("../../src/lib/truncation.js", () => ({
+  truncateForReduce: vi.fn((chunks: string[]) => ({
+    truncated: chunks,
+    warnings: [],
+    didTruncate: false,
+  })),
 }));
 
 vi.mock("../../src/lib/formatter.js", () => ({
@@ -30,6 +49,7 @@ vi.mock("../../src/lib/formatter.js", () => ({
 import { collectDiff } from "../../src/lib/diff.js";
 import { assembleUserMessage } from "../../src/lib/prompt.js";
 import { format } from "../../src/lib/formatter.js";
+import { splitDiffByFile, binPackFiles } from "../../src/lib/chunking.js";
 
 // ============================================================================
 // MockProvider
@@ -53,16 +73,26 @@ class MockProvider implements ReviewProvider {
 
   private _chatResponse: ChatResponse;
   private _streamChunks: StreamChunk[];
+  // When set, provider returns each response in sequence, cycling the last one
+  private _chatResponses?: ChatResponse[];
 
   constructor(chatResponse: ChatResponse, streamChunks: StreamChunk[]) {
     this._chatResponse = chatResponse;
     this._streamChunks = streamChunks;
   }
 
+  setSequentialResponses(responses: ChatResponse[]) {
+    this._chatResponses = responses;
+  }
+
   initialize = vi.fn().mockResolvedValue(undefined);
 
   chat = vi.fn().mockImplementation((req: ChatRequest) => {
     this.chatCalls.push(req);
+    if (this._chatResponses && this._chatResponses.length > 0) {
+      const idx = Math.min(this.chatCalls.length - 1, this._chatResponses.length - 1);
+      return Promise.resolve(this._chatResponses[idx]);
+    }
     return Promise.resolve(this._chatResponse);
   });
 
@@ -86,6 +116,7 @@ function createMockProvider(overrides: {
   chatResponse?: ChatResponse;
   streamChunks?: StreamChunk[];
   hasAutoSelect?: boolean;
+  modelInfo?: ModelInfo;
 } = {}): MockProvider {
   const chatResponse: ChatResponse = overrides.chatResponse ?? {
     content: "### HIGH Security issue found",
@@ -99,6 +130,8 @@ function createMockProvider(overrides: {
   ];
 
   const provider = new MockProvider(chatResponse, streamChunks);
+  const modelInfo = overrides.modelInfo ?? MOCK_MODEL_INFO;
+  vi.mocked(provider.validateModel).mockResolvedValue(modelInfo);
 
   if (overrides.hasAutoSelect !== false) {
     provider.autoSelect = vi.fn().mockResolvedValue("mock-model");
@@ -318,7 +351,8 @@ describe("review()", () => {
 
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
-        config: { ...mockConfig, prompt: "x".repeat(2000) },
+        // Use chunking: "never" to exercise single-pass budget warning path
+        config: { ...mockConfig, chunking: "never", prompt: "x".repeat(2000) },
         model: "mock-model",
       };
 
@@ -342,7 +376,8 @@ describe("review()", () => {
 
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
-        config: { ...mockConfig, prompt: "x".repeat(1000) },
+        // Use chunking: "never" to exercise single-pass diff_too_large error path
+        config: { ...mockConfig, chunking: "never", prompt: "x".repeat(1000) },
         model: "mock-model",
       };
 
@@ -657,5 +692,273 @@ describe("reviewStream()", () => {
     await expect(reviewStream(options, providerWithoutAutoSelect)).rejects.toThrow(
       expect.objectContaining({ code: "model_required" })
     );
+  });
+});
+
+// ============================================================================
+// shouldChunk() tests
+// ============================================================================
+
+describe("shouldChunk()", () => {
+  const baseConfig: ResolvedConfig = {
+    model: "mock-model",
+    format: "markdown",
+    stream: false,
+    prompt: "You are a code reviewer.",
+    defaultBase: "main",
+    ignorePaths: [],
+    provider: "copilot",
+    providerOptions: {},
+    chunking: "auto",
+  };
+
+  const modelInfo: ModelInfo = { ...MOCK_MODEL_INFO, maxPromptTokens: 10000 };
+
+  it("auto + small diff (< 80% of context) → false", () => {
+    // prompt=26 chars + diff=100 chars = 126 chars / 4 = 31.5 tokens → 0.3% of 10000
+    const smallDiff: DiffResult = {
+      raw: "x".repeat(100),
+      files: [],
+      stats: { filesChanged: 1, insertions: 1, deletions: 0 },
+    };
+    expect(shouldChunk({ ...baseConfig, chunking: "auto" }, smallDiff, modelInfo)).toBe(false);
+  });
+
+  it("auto + large diff (>= 80% of context) → true", () => {
+    // 10000 * 0.8 * 4 = 32000 chars total needed. prompt=26, so diff needs 32000 chars
+    const largeDiff: DiffResult = {
+      raw: "x".repeat(32000),
+      files: [],
+      stats: { filesChanged: 1, insertions: 100, deletions: 50 },
+    };
+    expect(shouldChunk({ ...baseConfig, chunking: "auto" }, largeDiff, modelInfo)).toBe(true);
+  });
+
+  it("chunking: 'always' → true regardless of diff size", () => {
+    const smallDiff: DiffResult = {
+      raw: "x".repeat(10),
+      files: [],
+      stats: { filesChanged: 1, insertions: 1, deletions: 0 },
+    };
+    expect(shouldChunk({ ...baseConfig, chunking: "always" }, smallDiff, modelInfo)).toBe(true);
+  });
+
+  it("chunking: 'never' → false regardless of diff size", () => {
+    const hugeDiff: DiffResult = {
+      raw: "x".repeat(500000),
+      files: [],
+      stats: { filesChanged: 10, insertions: 5000, deletions: 2000 },
+    };
+    expect(shouldChunk({ ...baseConfig, chunking: "never" }, hugeDiff, modelInfo)).toBe(false);
+  });
+});
+
+// ============================================================================
+// chunked review() tests
+// ============================================================================
+
+describe("review() — map-reduce chunked pipeline", () => {
+  const mockConfig: ResolvedConfig = {
+    model: "mock-model",
+    format: "markdown",
+    stream: false,
+    prompt: "You are a code reviewer.",
+    defaultBase: "main",
+    ignorePaths: [],
+    provider: "copilot",
+    providerOptions: {},
+    chunking: "auto",
+  };
+
+  // Model with 10000 token context — large enough to have a viable chunkBudget
+  // (10000 - 6 - 150 = 9844) but small enough that an 80%-threshold test can
+  // be triggered by a ~32 000-char diff (32000/4 = 8000 tokens > 10000*0.8).
+  const modelInfo10k: ModelInfo = { ...MOCK_MODEL_INFO, maxPromptTokens: 10000 };
+
+  const smallDiff: DiffResult = {
+    raw: "diff --git a/a.ts b/a.ts\n+small",
+    files: [{ path: "a.ts", status: "modified", insertions: 1, deletions: 0 }],
+    stats: { filesChanged: 1, insertions: 1, deletions: 0 },
+  };
+
+  // A diff large enough to trigger auto-chunking on modelInfo10k:
+  // estimate = (26 + 32000) / 4 = 8006 tokens; 10000 * 0.8 = 8000 → 8006 >= 8000 → chunk
+  const autoChunkDiff: DiffResult = {
+    raw: "diff --git a/a.ts b/a.ts\n+" + "x".repeat(32000),
+    files: [
+      { path: "a.ts", status: "modified", insertions: 100, deletions: 0 },
+      { path: "b.ts", status: "modified", insertions: 100, deletions: 0 },
+      { path: "c.ts", status: "modified", insertions: 100, deletions: 0 },
+    ],
+    stats: { filesChanged: 3, insertions: 300, deletions: 0 },
+  };
+
+  // A smaller multi-file diff used in "always" chunking tests
+  const largeDiff: DiffResult = {
+    raw: "diff --git a/a.ts b/a.ts\n+x",
+    files: [
+      { path: "a.ts", status: "modified", insertions: 100, deletions: 0 },
+      { path: "b.ts", status: "modified", insertions: 100, deletions: 0 },
+      { path: "c.ts", status: "modified", insertions: 100, deletions: 0 },
+    ],
+    stats: { filesChanged: 3, insertions: 300, deletions: 0 },
+  };
+
+  const segA = { path: "a.ts", raw: "diff a", estimatedTokens: 20, hunks: [] };
+  const segB = { path: "b.ts", raw: "diff b", estimatedTokens: 20, hunks: [] };
+  const segC = { path: "c.ts", raw: "diff c", estimatedTokens: 20, hunks: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("small diff → single pass (provider.chat called once)", async () => {
+    const provider = createMockProvider({ modelInfo: { ...MOCK_MODEL_INFO, maxPromptTokens: 128000 } });
+    vi.mocked(collectDiff).mockResolvedValue(smallDiff);
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "auto" },
+      model: "mock-model",
+    };
+
+    await review(options, provider);
+
+    expect(provider.chat).toHaveBeenCalledTimes(1);
+    expect(assembleUserMessage).toHaveBeenCalledWith(smallDiff);
+  });
+
+  it("large diff + chunking: 'auto' → chunked path (chat called N+1 times for map+reduce)", async () => {
+    const provider = createMockProvider({ modelInfo: modelInfo10k });
+    // autoChunkDiff is large enough to cross the 80% threshold on modelInfo10k
+    vi.mocked(collectDiff).mockResolvedValue(autoChunkDiff);
+
+    // 3 segments → 3 chunks (one per file)
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB, segC], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA], [segB], [segC]]);
+
+    provider.setSequentialResponses([
+      { content: "finding A", model: "mock-model", usage: { totalTokens: 10 } },
+      { content: "finding B", model: "mock-model", usage: { totalTokens: 10 } },
+      { content: "finding C", model: "mock-model", usage: { totalTokens: 10 } },
+      { content: "### HIGH final unified review", model: "mock-model", usage: { totalTokens: 30 } },
+    ]);
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "auto" },
+      model: "mock-model",
+    };
+
+    const result = await review(options, provider);
+
+    // 3 map + 1 reduce = 4 total
+    expect(provider.chat).toHaveBeenCalledTimes(4);
+    expect(result).toHaveProperty("chunked", true);
+  });
+
+  it("1 chunk → reduce skipped (provider.chat called exactly 1 time)", async () => {
+    const provider = createMockProvider({ modelInfo: modelInfo10k });
+    vi.mocked(collectDiff).mockResolvedValue(largeDiff);
+
+    // Single chunk → no reduce
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA]]);
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "always" },
+      model: "mock-model",
+    };
+
+    await review(options, provider);
+
+    expect(provider.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it("3 chunks → 3 map calls + 1 reduce call (4 total)", async () => {
+    const provider = createMockProvider({ modelInfo: modelInfo10k });
+    vi.mocked(collectDiff).mockResolvedValue(largeDiff);
+
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB, segC], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA], [segB], [segC]]);
+
+    provider.setSequentialResponses([
+      { content: "finding A", model: "mock-model", usage: { totalTokens: 10 } },
+      { content: "finding B", model: "mock-model", usage: { totalTokens: 10 } },
+      { content: "finding C", model: "mock-model", usage: { totalTokens: 10 } },
+      { content: "final", model: "mock-model", usage: { totalTokens: 5 } },
+    ]);
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "always" },
+      model: "mock-model",
+    };
+
+    await review(options, provider);
+
+    expect(provider.chat).toHaveBeenCalledTimes(4);
+  });
+
+  it("chunk usage summed correctly: total = sum of all chunk + reduce tokens", async () => {
+    const provider = createMockProvider({ modelInfo: modelInfo10k });
+    vi.mocked(collectDiff).mockResolvedValue(largeDiff);
+
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA], [segB]]);
+
+    provider.setSequentialResponses([
+      { content: "finding A", model: "mock-model", usage: { totalTokens: 100 } },
+      { content: "finding B", model: "mock-model", usage: { totalTokens: 200 } },
+      { content: "final", model: "mock-model", usage: { totalTokens: 50 } },
+    ]);
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "always" },
+      model: "mock-model",
+    };
+
+    const result = await review(options, provider);
+
+    // total = 100 + 200 + 50 = 350
+    expect(result.usage.totalTokens).toBe(350);
+    const chunked = result as ChunkedReviewResult;
+    expect(chunked.chunked).toBe(true);
+    expect(chunked.reduceUsage.totalTokens).toBe(50);
+    expect(chunked.chunks[0].usage.totalTokens).toBe(100);
+    expect(chunked.chunks[1].usage.totalTokens).toBe(200);
+  });
+
+  it("reduce failure → fallback to raw per-chunk findings with warning prefix", async () => {
+    const provider = createMockProvider({ modelInfo: modelInfo10k });
+    vi.mocked(collectDiff).mockResolvedValue(largeDiff);
+
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA], [segB]]);
+
+    let callCount = 0;
+    vi.mocked(provider.chat).mockImplementation((req: ChatRequest) => {
+      provider.chatCalls.push(req);
+      callCount++;
+      if (callCount <= 2) {
+        return Promise.resolve({ content: `finding ${callCount}`, model: "mock-model", usage: { totalTokens: 10 } });
+      }
+      // Reduce call fails
+      return Promise.reject(new Error("API error during reduce"));
+    });
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "always" },
+      model: "mock-model",
+    };
+
+    const result = await review(options, provider);
+
+    // Should still succeed with fallback content
+    expect(result.content).toContain("Aggregation failed");
+    expect(result.warnings.some(w => w.includes("reduce") || w.includes("Reduce"))).toBe(true);
   });
 });

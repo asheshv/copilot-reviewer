@@ -315,6 +315,19 @@ export interface ReviewResult {
 }
 
 /**
+ * Result of a chunked (map-reduce) review.
+ * usage = sum of all chunk + reduce tokens.
+ */
+export interface ChunkedReviewResult extends ReviewResult {
+  chunked: true;
+  chunks: {
+    files: string[];
+    usage: { totalTokens: number };
+  }[];
+  reduceUsage: { totalTokens: number };
+}
+
+/**
  * Result of a streaming review.
  */
 export interface ReviewStreamResult {

@@ -1,13 +1,16 @@
 // src/lib/review.ts
 
 import { collectDiff } from "./diff.js";
-import { assembleUserMessage } from "./prompt.js";
+import { assembleUserMessage, assembleChunkMessage, assembleReduceMessage, extractHunkRanges, getReduceSystemPrompt } from "./prompt.js";
 import { format } from "./formatter.js";
+import { splitDiffByFile, binPackFiles } from "./chunking.js";
+import { truncateForReduce } from "./truncation.js";
 import {
   ConfigError,
   DiffError,
   ReviewError,
   type ChatRequest,
+  type ChunkedReviewResult,
   type DiffResult,
   type ModelInfo,
   type ReviewOptions,
@@ -17,8 +20,23 @@ import {
 import type { ReviewProvider } from "./providers/types.js";
 
 /**
+ * Decide whether to use the map-reduce chunked pipeline.
+ */
+export function shouldChunk(
+  config: import("./types.js").ResolvedConfig,
+  diff: DiffResult,
+  modelInfo: ModelInfo,
+): boolean {
+  if (config.chunking === "always") return true;
+  if (config.chunking === "never") return false;
+  // "auto": chunk if estimated tokens >= 80% of model context
+  const estimate = (config.prompt.length + diff.raw.length) / 4;
+  return estimate >= modelInfo.maxPromptTokens * 0.8;
+}
+
+/**
  * Buffered review pipeline.
- * Collects diff, resolves model, checks token budget, calls API, formats output.
+ * Routes to chunkedReview when shouldChunk() returns true.
  */
 export async function review(
   options: ReviewOptions,
@@ -44,11 +62,29 @@ export async function review(
   // Step 2: Resolve model
   const modelInfo = await resolveModel(options, provider);
 
-  // Step 3: Check token budget
+  // Step 3: Route to chunked or single-pass
   const warnings: string[] = [];
-  checkTokenBudget(options.config.prompt, diff, modelInfo, warnings);
 
-  // Step 4: Assemble messages
+  if (shouldChunk(options.config, diff, modelInfo)) {
+    return chunkedReview(diff, modelInfo, options, provider, warnings);
+  }
+
+  // Single-pass: check token budget (throws if >= 100%)
+  checkTokenBudget(options.config.prompt, diff, modelInfo, warnings);
+  return singlePassReview(diff, modelInfo, options, provider, warnings);
+}
+
+/**
+ * Single-pass review pipeline (renamed from old review() body).
+ */
+async function singlePassReview(
+  diff: DiffResult,
+  modelInfo: ModelInfo,
+  options: ReviewOptions,
+  provider: ReviewProvider,
+  warnings: string[],
+): Promise<ReviewResult> {
+  // Assemble messages
   const userMessage = assembleUserMessage(diff);
   const request: ChatRequest = {
     model: modelInfo.id,
@@ -57,15 +93,14 @@ export async function review(
     stream: false,
   };
 
-  // Step 5: Call API
+  // Call API
   const chatResponse = await provider.chat(request);
 
-  // Step 6: Handle empty response
+  // Handle empty response
   if (!chatResponse.content) {
     warnings.push("Copilot returned no findings.");
   }
 
-  // Step 7: Format output (always, even for empty content — formatter adds structure)
   const reviewResult: ReviewResult = {
     content: chatResponse.content || "",
     model: chatResponse.model,
@@ -83,6 +118,186 @@ export async function review(
     diff,
     warnings,
   };
+}
+
+/**
+ * Map-reduce chunked review pipeline.
+ *
+ * 1. Split diff by file
+ * 2. Bin-pack into chunks
+ * 3. MAP: review each chunk sequentially
+ * 4. REDUCE: aggregate findings (skip if only 1 chunk)
+ * 5. Return ChunkedReviewResult with metadata
+ */
+async function chunkedReview(
+  diff: DiffResult,
+  modelInfo: ModelInfo,
+  options: ReviewOptions,
+  provider: ReviewProvider,
+  warnings: string[],
+): Promise<ReviewResult> {
+  // Split diff into per-file segments
+  const { segments, warnings: splitWarnings } = splitDiffByFile(diff.raw);
+  warnings.push(...splitWarnings);
+
+  // Compute chunk budget: model context minus system prompt overhead
+  const chunkBudget = modelInfo.maxPromptTokens - Math.floor(options.config.prompt.length / 4) - 150;
+  if (chunkBudget <= 0) {
+    throw new ReviewError(
+      "invalid_model_limits",
+      `System prompt too large for model context (${modelInfo.id}). Reduce prompt size.`,
+      false,
+    );
+  }
+
+  // Bin-pack segments into chunks
+  const chunks = binPackFiles(segments, chunkBudget);
+  const totalChunks = chunks.length;
+
+  // Build file manifest and hunk ranges for the whole diff
+  const hunkRanges = extractHunkRanges(segments);
+
+  // -------------------------------------------------------------------------
+  // MAP phase
+  // -------------------------------------------------------------------------
+
+  const chunkFindings: { files: string[]; content: string; usage: { totalTokens: number } }[] = [];
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkSegments = chunks[i];
+    const chunkFiles = chunkSegments.map((s) => s.path);
+    const chunkMessage = assembleChunkMessage(i, totalChunks, chunkSegments, "");
+
+    const request: ChatRequest = {
+      model: modelInfo.id,
+      systemPrompt: options.config.prompt,
+      messages: [{ role: "user", content: chunkMessage }],
+      stream: false,
+    };
+
+    const response = await provider.chat(request);
+
+    if (process.stderr.isTTY) {
+      const tokenStr = response.usage?.totalTokens ?? 0;
+      process.stderr.write(
+        `Reviewing chunk ${i + 1}/${totalChunks} (${chunkFiles.join(", ")})... done (${tokenStr} tokens)\n`,
+      );
+    }
+
+    chunkFindings.push({
+      files: chunkFiles,
+      content: response.content || "",
+      usage: response.usage ?? { totalTokens: 0 },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // If only 1 chunk — skip reduce
+  // -------------------------------------------------------------------------
+
+  if (totalChunks === 1) {
+    const singleFinding = chunkFindings[0];
+    const chunkUsage = singleFinding.usage;
+
+    const baseResult: ReviewResult = {
+      content: singleFinding.content,
+      model: modelInfo.id,
+      usage: chunkUsage,
+      diff,
+      warnings,
+    };
+    const formatted = format(baseResult, options.config.format);
+
+    const result: ChunkedReviewResult = {
+      content: formatted,
+      model: modelInfo.id,
+      usage: chunkUsage,
+      diff,
+      warnings,
+      chunked: true,
+      chunks: [{ files: singleFinding.files, usage: chunkUsage }],
+      reduceUsage: { totalTokens: 0 },
+    };
+    return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // REDUCE phase
+  // -------------------------------------------------------------------------
+
+  const reduceBudget = Math.floor(modelInfo.maxPromptTokens * 0.9);
+
+  // Check if findings fit in reduce budget; truncate if needed
+  const rawFindings = chunkFindings.map((f) => f.content);
+  const totalFindingTokens = rawFindings.reduce((sum, f) => sum + Math.ceil(f.length / 4), 0);
+
+  let truncationPreamble = "";
+  let finalFindings = rawFindings;
+
+  if (totalFindingTokens > reduceBudget) {
+    const { truncated, warnings: truncWarnings, didTruncate } = truncateForReduce(rawFindings, reduceBudget);
+    finalFindings = truncated;
+    warnings.push(...truncWarnings);
+    if (didTruncate) {
+      truncationPreamble = "Note: some chunk findings were truncated to fit model context.\n\n";
+    }
+  }
+
+  const chunkFindingsForReduce = chunkFindings.map((f, i) => ({
+    files: f.files,
+    content: truncationPreamble + finalFindings[i],
+  }));
+
+  const reduceMessage = assembleReduceMessage(chunkFindingsForReduce, diff.files, hunkRanges);
+
+  let reduceContent: string;
+  let reduceUsage: { totalTokens: number };
+
+  try {
+    const reduceRequest: ChatRequest = {
+      model: modelInfo.id,
+      systemPrompt: getReduceSystemPrompt(),
+      messages: [{ role: "user", content: reduceMessage }],
+      stream: false,
+    };
+    const reduceResponse = await provider.chat(reduceRequest);
+    reduceContent = reduceResponse.content || "";
+    reduceUsage = reduceResponse.usage ?? { totalTokens: 0 };
+  } catch (err) {
+    // Fallback: concatenate raw chunk findings
+    warnings.push(
+      `Reduce pass failed: ${err instanceof Error ? err.message : String(err)}. Falling back to raw per-chunk findings.`,
+    );
+    reduceContent =
+      "⚠ Aggregation failed — raw per-chunk findings below (may contain duplicates):\n\n" +
+      chunkFindings.map((f, i) => `## Chunk ${i + 1} (${f.files.join(", ")})\n${f.content}`).join("\n\n");
+    reduceUsage = { totalTokens: 0 };
+  }
+
+  // Sum all token usage
+  const totalTokens =
+    chunkFindings.reduce((sum, f) => sum + f.usage.totalTokens, 0) + reduceUsage.totalTokens;
+
+  const baseResult: ReviewResult = {
+    content: reduceContent,
+    model: modelInfo.id,
+    usage: { totalTokens },
+    diff,
+    warnings,
+  };
+  const formatted = format(baseResult, options.config.format);
+
+  const result: ChunkedReviewResult = {
+    content: formatted,
+    model: modelInfo.id,
+    usage: { totalTokens },
+    diff,
+    warnings,
+    chunked: true,
+    chunks: chunkFindings.map((f) => ({ files: f.files, usage: f.usage })),
+    reduceUsage,
+  };
+  return result;
 }
 
 /**
