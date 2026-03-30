@@ -349,8 +349,8 @@ async function chunkedReview(
 
 /**
  * Streaming review pipeline.
- * Same as buffered through steps 1-4, but returns an AsyncIterable<string> stream
- * instead of a formatted result.
+ * Routes to chunkedReviewStream when shouldChunk() returns true.
+ * Otherwise streams directly via provider.chatStream().
  */
 export async function reviewStream(
   options: ReviewOptions,
@@ -362,11 +362,28 @@ export async function reviewStream(
   // Step 2: Resolve model
   const modelInfo = await resolveModel(options, provider);
 
-  // Step 3: Check token budget
+  // Step 3: Check token budget / collect warnings
   const warnings: string[] = [];
   checkTokenBudget(options.config.prompt, diff, modelInfo, warnings);
 
-  // Step 4: Assemble messages
+  // Step 4: Route — chunked streaming or single-pass streaming
+  if (shouldChunk(options.config, diff, modelInfo)) {
+    return chunkedReviewStream(diff, modelInfo, options, provider, warnings);
+  }
+
+  return singlePassStream(diff, modelInfo, options, provider, warnings);
+}
+
+/**
+ * Single-pass streaming pipeline (direct chatStream, no chunking).
+ */
+async function singlePassStream(
+  diff: DiffResult,
+  modelInfo: ModelInfo,
+  options: ReviewOptions,
+  provider: ReviewProvider,
+  warnings: string[],
+): Promise<ReviewStreamResult> {
   const userMessage = assembleUserMessage(diff);
   const request: ChatRequest = {
     model: modelInfo.id,
@@ -375,13 +392,9 @@ export async function reviewStream(
     stream: true,
   };
 
-  // Step 5: Call streaming API
   const rawStream = provider.chatStream(request);
-
-  // Capture usage lazily via closure — populated when the "done" chunk is consumed
   const usageCapture: { value?: { totalTokens: number } } = {};
 
-  // Convert StreamChunk to plain text strings, capturing usage from the "done" chunk
   async function* textStream(): AsyncIterable<string> {
     for await (const chunk of rawStream) {
       if ((chunk.type === "content" || chunk.type === "reasoning") && chunk.text) {
@@ -389,6 +402,177 @@ export async function reviewStream(
       }
       if (chunk.type === "done" && chunk.usage) {
         usageCapture.value = chunk.usage;
+      }
+    }
+  }
+
+  return {
+    stream: textStream(),
+    warnings,
+    diff,
+    model: modelInfo.id,
+    get usage() { return usageCapture.value; },
+  };
+}
+
+/**
+ * Chunked streaming pipeline: buffered MAP phase + streamed REDUCE phase.
+ *
+ * - MAP: provider.chat() per chunk (buffered, not user-facing)
+ * - Single chunk: provider.chatStream() directly (no reduce)
+ * - REDUCE (>1 chunk): provider.chatStream() — streams final output to caller
+ */
+async function chunkedReviewStream(
+  diff: DiffResult,
+  modelInfo: ModelInfo,
+  options: ReviewOptions,
+  provider: ReviewProvider,
+  warnings: string[],
+): Promise<ReviewStreamResult> {
+  // Split diff into per-file segments
+  const { segments, warnings: splitWarnings } = splitDiffByFile(diff.raw);
+  warnings.push(...splitWarnings);
+
+  // Compute chunk budget
+  const chunkBudget = modelInfo.maxPromptTokens - Math.floor(options.config.prompt.length / 4) - 150;
+  if (chunkBudget <= 0) {
+    throw new ReviewError(
+      "invalid_model_limits",
+      `System prompt too large for model context (${modelInfo.id}). Reduce prompt size.`,
+      false,
+    );
+  }
+
+  const chunks = binPackFiles(segments, chunkBudget);
+  const totalChunks = chunks.length;
+  const hunkRanges = extractHunkRanges(segments);
+
+  // -------------------------------------------------------------------------
+  // Single chunk → stream directly, no reduce
+  // -------------------------------------------------------------------------
+
+  if (totalChunks === 1) {
+    const [chunkSegments] = chunks;
+    const request: ChatRequest = {
+      model: modelInfo.id,
+      systemPrompt: options.config.prompt,
+      messages: [{ role: "user", content: assembleChunkMessage(0, 1, chunkSegments, "") }],
+      stream: true,
+    };
+
+    const rawStream = provider.chatStream(request);
+    const usageCapture: { value?: { totalTokens: number } } = {};
+
+    async function* textStream(): AsyncIterable<string> {
+      for await (const chunk of rawStream) {
+        if ((chunk.type === "content" || chunk.type === "reasoning") && chunk.text) {
+          yield chunk.text;
+        }
+        if (chunk.type === "done" && chunk.usage) {
+          usageCapture.value = chunk.usage;
+        }
+      }
+    }
+
+    return {
+      stream: textStream(),
+      warnings,
+      diff,
+      model: modelInfo.id,
+      get usage() { return usageCapture.value; },
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // MAP phase (buffered) — >1 chunk
+  // -------------------------------------------------------------------------
+
+  const chunkFindings: { files: string[]; content: string; usage: { totalTokens: number } }[] = [];
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkSegments = chunks[i];
+    const chunkFiles = chunkSegments.map((s) => s.path);
+
+    let response;
+    try {
+      response = await provider.chat({
+        model: modelInfo.id,
+        systemPrompt: options.config.prompt,
+        messages: [{ role: "user", content: assembleChunkMessage(i, totalChunks, chunkSegments, "") }],
+        stream: false,
+      });
+    } catch (err) {
+      throw new ReviewError(
+        "chunk_failed",
+        `Review failed on chunk ${i + 1}/${totalChunks} (${chunkFiles.join(", ")}): ${err instanceof Error ? err.message : String(err)}`,
+        false,
+        err instanceof Error ? err : undefined,
+      );
+    }
+
+    if (process.stderr.isTTY) {
+      const tokenStr = response.usage?.totalTokens ?? 0;
+      process.stderr.write(
+        `Reviewing chunk ${i + 1}/${totalChunks} (${chunkFiles.join(", ")})... done (${tokenStr} tokens)\n`,
+      );
+    }
+
+    chunkFindings.push({
+      files: chunkFiles,
+      content: response.content || "",
+      usage: response.usage ?? { totalTokens: 0 },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // REDUCE phase (streamed)
+  // -------------------------------------------------------------------------
+
+  const reduceBudget = Math.floor(modelInfo.maxPromptTokens * 0.9);
+  const rawFindings = chunkFindings.map((f) => f.content);
+  const totalFindingTokens = rawFindings.reduce((sum, f) => sum + Math.ceil(f.length / 4), 0);
+
+  let truncationPreamble = "";
+  let finalFindings = rawFindings;
+
+  if (totalFindingTokens > reduceBudget) {
+    const { truncated, warnings: truncWarnings, didTruncate } = truncateForReduce(rawFindings, reduceBudget);
+    finalFindings = truncated;
+    warnings.push(...truncWarnings);
+    if (didTruncate) {
+      truncationPreamble = "Note: some chunk findings were truncated to fit model context.\n\n";
+    }
+  }
+
+  const chunkFindingsForReduce = chunkFindings.map((f, i) => ({
+    files: f.files,
+    content: truncationPreamble + finalFindings[i],
+  }));
+
+  const reduceMessage = assembleReduceMessage(chunkFindingsForReduce, diff.files, hunkRanges);
+
+  if (process.stderr.isTTY) {
+    process.stderr.write("Aggregating findings...\n");
+  }
+
+  const reduceRequest: ChatRequest = {
+    model: modelInfo.id,
+    systemPrompt: getReduceSystemPrompt(),
+    messages: [{ role: "user", content: reduceMessage }],
+    stream: true,
+  };
+
+  const rawStream = provider.chatStream(reduceRequest);
+  const usageCapture: { value?: { totalTokens: number } } = {};
+  const mapTokens = chunkFindings.reduce((sum, f) => sum + f.usage.totalTokens, 0);
+
+  async function* textStream(): AsyncIterable<string> {
+    for await (const chunk of rawStream) {
+      if ((chunk.type === "content" || chunk.type === "reasoning") && chunk.text) {
+        yield chunk.text;
+      }
+      if (chunk.type === "done" && chunk.usage) {
+        usageCapture.value = { totalTokens: mapTokens + chunk.usage.totalTokens };
       }
     }
   }

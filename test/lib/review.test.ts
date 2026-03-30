@@ -538,6 +538,12 @@ describe("reviewStream()", () => {
     };
     vi.mocked(collectDiff).mockResolvedValue(largeDiff);
 
+    // Large diff will trigger shouldChunk() — set up chunking mocks so the path doesn't crash.
+    // Single segment → single chunk → chatStream used directly (no map-reduce).
+    const seg = { path: "test.ts", raw: "x".repeat(25000), estimatedTokens: 6250, hunks: [] };
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [seg], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[seg]]);
+
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: { ...mockConfig, prompt: "x".repeat(2000) },
@@ -692,6 +698,214 @@ describe("reviewStream()", () => {
     await expect(reviewStream(options, providerWithoutAutoSelect)).rejects.toThrow(
       expect.objectContaining({ code: "model_required" })
     );
+  });
+});
+
+// ============================================================================
+// reviewStream() — chunked streaming pipeline
+// ============================================================================
+
+describe("reviewStream() — chunked streaming pipeline", () => {
+  // Model with 10000 token context — small enough to trigger auto-chunking on large diffs
+  const modelInfo10k: ModelInfo = { ...MOCK_MODEL_INFO, maxPromptTokens: 10000 };
+
+  const mockConfig: ResolvedConfig = {
+    model: "mock-model",
+    format: "markdown",
+    stream: true,
+    prompt: "You are a code reviewer.",
+    defaultBase: "main",
+    ignorePaths: [],
+    provider: "copilot",
+    providerOptions: {},
+    chunking: "auto",
+  };
+
+  // A diff large enough to trigger auto-chunking on modelInfo10k
+  // estimate = (26 + 32000) / 4 = 8006 tokens; 10000 * 0.8 = 8000 → 8006 >= 8000 → chunk
+  const autoChunkDiff: DiffResult = {
+    raw: "diff --git a/a.ts b/a.ts\n+" + "x".repeat(32000),
+    files: [
+      { path: "a.ts", status: "modified", insertions: 100, deletions: 0 },
+      { path: "b.ts", status: "modified", insertions: 100, deletions: 0 },
+      { path: "c.ts", status: "modified", insertions: 100, deletions: 0 },
+    ],
+    stats: { filesChanged: 3, insertions: 300, deletions: 0 },
+  };
+
+  const smallDiff: DiffResult = {
+    raw: "diff --git a/a.ts b/a.ts\n+small change",
+    files: [{ path: "a.ts", status: "modified", insertions: 1, deletions: 0 }],
+    stats: { filesChanged: 1, insertions: 1, deletions: 0 },
+  };
+
+  const segA = { path: "a.ts", raw: "diff a", estimatedTokens: 20, hunks: [] };
+  const segB = { path: "b.ts", raw: "diff b", estimatedTokens: 20, hunks: [] };
+  const segC = { path: "c.ts", raw: "diff c", estimatedTokens: 20, hunks: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("large diff + chunking:'auto' → chat for map, chatStream for reduce (not chat)", async () => {
+    const provider = createMockProvider({
+      modelInfo: modelInfo10k,
+      chatResponse: { content: "finding", model: "mock-model", usage: { totalTokens: 10 } },
+      streamChunks: [
+        { type: "content", text: "Aggregated finding" },
+        { type: "done", usage: { totalTokens: 30 }, model: "mock-model" },
+      ],
+    });
+    vi.mocked(collectDiff).mockResolvedValue(autoChunkDiff);
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB, segC], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA], [segB], [segC]]);
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "auto" },
+      model: "mock-model",
+    };
+
+    const result = await reviewStream(options, provider);
+
+    // MAP: 3 chunks → 3 calls to provider.chat
+    expect(provider.chat).toHaveBeenCalledTimes(3);
+
+    // Drain the stream to trigger reduce
+    const chunks: string[] = [];
+    for await (const chunk of result.stream) {
+      chunks.push(chunk);
+    }
+
+    // REDUCE: 1 call to provider.chatStream (not provider.chat)
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
+    expect(chunks).toEqual(["Aggregated finding"]);
+    // chat should still be 3 (reduce used chatStream, not chat)
+    expect(provider.chat).toHaveBeenCalledTimes(3);
+  });
+
+  it("single chunk → chatStream called for that chunk, chat not called", async () => {
+    const provider = createMockProvider({
+      modelInfo: modelInfo10k,
+      streamChunks: [
+        { type: "content", text: "Single chunk finding" },
+        { type: "done", usage: { totalTokens: 15 }, model: "mock-model" },
+      ],
+    });
+
+    const smallConfigDiff: DiffResult = {
+      raw: "diff --git a/a.ts b/a.ts\n+x",
+      files: [{ path: "a.ts", status: "modified", insertions: 1, deletions: 0 }],
+      stats: { filesChanged: 1, insertions: 1, deletions: 0 },
+    };
+
+    vi.mocked(collectDiff).mockResolvedValue(smallConfigDiff);
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA]]);
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      // chunking: "always" forces the chunked path even for small diff
+      config: { ...mockConfig, chunking: "always" },
+      model: "mock-model",
+    };
+
+    const result = await reviewStream(options, provider);
+
+    // chat should NOT be called for single-chunk streaming path
+    expect(provider.chat).not.toHaveBeenCalled();
+
+    const chunks: string[] = [];
+    for await (const chunk of result.stream) {
+      chunks.push(chunk);
+    }
+
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
+    expect(chunks).toEqual(["Single chunk finding"]);
+  });
+
+  it("map phase uses chat (buffered), reduce uses chatStream (streaming)", async () => {
+    const provider = createMockProvider({
+      modelInfo: modelInfo10k,
+      streamChunks: [
+        { type: "content", text: "Streamed reduce output" },
+        { type: "done", usage: { totalTokens: 50 }, model: "mock-model" },
+      ],
+    });
+    provider.setSequentialResponses([
+      { content: "chunk A findings", model: "mock-model", usage: { totalTokens: 10 } },
+      { content: "chunk B findings", model: "mock-model", usage: { totalTokens: 10 } },
+    ]);
+
+    vi.mocked(collectDiff).mockResolvedValue(autoChunkDiff);
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA], [segB]]);
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "always" },
+      model: "mock-model",
+    };
+
+    const result = await reviewStream(options, provider);
+
+    // Before consuming stream: map is done (2 chat calls), chatStream not yet called
+    expect(provider.chat).toHaveBeenCalledTimes(2);
+    // chatStream is invoked during setup (returns the AsyncIterable) but we check it was called
+    expect(provider.chatStream).toHaveBeenCalledTimes(1);
+
+    const chunks: string[] = [];
+    for await (const chunk of result.stream) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual(["Streamed reduce output"]);
+    // chat count hasn't changed — reduce used chatStream
+    expect(provider.chat).toHaveBeenCalledTimes(2);
+  });
+
+  it("progress markers emitted to stderr between map chunks when stderr.isTTY", async () => {
+    const stderrWriteSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const originalIsTTY = process.stderr.isTTY;
+    Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
+
+    try {
+      const provider = createMockProvider({
+        modelInfo: modelInfo10k,
+        chatResponse: { content: "finding", model: "mock-model", usage: { totalTokens: 10 } },
+        streamChunks: [
+          { type: "content", text: "Aggregated" },
+          { type: "done", usage: { totalTokens: 20 }, model: "mock-model" },
+        ],
+      });
+
+      vi.mocked(collectDiff).mockResolvedValue(autoChunkDiff);
+      vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB, segC], warnings: [] });
+      vi.mocked(binPackFiles).mockReturnValue([[segA], [segB], [segC]]);
+
+      const options: ReviewOptions = {
+        diff: { mode: "unstaged" },
+        config: { ...mockConfig, chunking: "always" },
+        model: "mock-model",
+      };
+
+      const result = await reviewStream(options, provider);
+      // Drain stream to complete reduce
+      for await (const _ of result.stream) { /* drain */ }
+
+      const stderrCalls = stderrWriteSpy.mock.calls.map((c) => c[0] as string);
+
+      // Should have progress messages for each map chunk
+      const chunkMessages = stderrCalls.filter((s) => s.includes("Reviewing chunk"));
+      expect(chunkMessages.length).toBe(3);
+
+      // Should have the "Aggregating findings..." message before reduce
+      const aggregateMsg = stderrCalls.find((s) => s.includes("Aggregating findings"));
+      expect(aggregateMsg).toBeDefined();
+    } finally {
+      Object.defineProperty(process.stderr, "isTTY", { value: originalIsTTY, configurable: true });
+      stderrWriteSpy.mockRestore();
+    }
   });
 });
 
