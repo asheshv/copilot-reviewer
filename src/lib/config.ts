@@ -29,13 +29,26 @@ function levenshtein(a: string, b: string): number {
   return dp[m][n];
 }
 
-/** Validate a URL string; throw ConfigError if malformed */
+/** Validate a URL string; throw ConfigError if malformed or non-http/https */
 function validateUrl(urlStr: string, context: string): void {
+  let parsed: URL;
   try {
-    new URL(urlStr);
+    parsed = new URL(urlStr);
   } catch {
-    throw new ConfigError("invalid_url", `Invalid URL in ${context}: ${urlStr}`, context, false);
+    throw new ConfigError("invalid_url", `Invalid URL in ${context}: '${urlStr}'`, context, false);
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new ConfigError("invalid_url", `URL in ${context} must use http or https scheme: '${urlStr}'`, context, false);
+  }
+}
+
+/** Returns true if dir contains config.json or config.md */
+async function dirHasConfig(dir: string): Promise<boolean> {
+  const jsonPath = join(dir, "config.json");
+  const mdPath = join(dir, "config.md");
+  try { await access(jsonPath); return true; } catch {}
+  try { await access(mdPath); return true; } catch {}
+  return false;
 }
 
 /**
@@ -47,25 +60,8 @@ async function resolveGlobalConfigDir(): Promise<string> {
   const newDir = join(home, ".code-reviewer");
   const oldDir = join(home, ".copilot-review");
 
-  const newJsonPath = join(newDir, "config.json");
-  const oldJsonPath = join(oldDir, "config.json");
-
-  let newExists = false;
-  let oldExists = false;
-
-  try {
-    await access(newJsonPath);
-    newExists = true;
-  } catch {
-    // doesn't exist
-  }
-
-  try {
-    await access(oldJsonPath);
-    oldExists = true;
-  } catch {
-    // doesn't exist
-  }
+  const newExists = await dirHasConfig(newDir);
+  const oldExists = await dirHasConfig(oldDir);
 
   if (newExists && oldExists) {
     process.stderr.write(
@@ -90,25 +86,8 @@ async function resolveProjectConfigDir(gitRoot: string): Promise<string> {
   const newDir = join(gitRoot, ".code-reviewer");
   const oldDir = join(gitRoot, ".copilot-review");
 
-  const newJsonPath = join(newDir, "config.json");
-  const oldJsonPath = join(oldDir, "config.json");
-
-  let newExists = false;
-  let oldExists = false;
-
-  try {
-    await access(newJsonPath);
-    newExists = true;
-  } catch {
-    // doesn't exist
-  }
-
-  try {
-    await access(oldJsonPath);
-    oldExists = true;
-  } catch {
-    // doesn't exist
-  }
+  const newExists = await dirHasConfig(newDir);
+  const oldExists = await dirHasConfig(oldDir);
 
   if (newExists && oldExists) {
     process.stderr.write(

@@ -610,6 +610,10 @@ describe("loadConfig", () => {
   });
 
   describe("environment variable layer", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
     it("CODEREVIEWER_PROVIDER sets config.provider", async () => {
       vi.stubEnv("CODEREVIEWER_PROVIDER", "ollama");
       mockGitRoot(null);
@@ -618,7 +622,6 @@ describe("loadConfig", () => {
       const config = await loadConfig();
 
       expect(config.provider).toBe("ollama");
-      vi.unstubAllEnvs();
     });
 
     it("CODEREVIEWER_OLLAMA_URL sets config.providerOptions.ollama.baseUrl", async () => {
@@ -629,7 +632,6 @@ describe("loadConfig", () => {
       const config = await loadConfig();
 
       expect(config.providerOptions.ollama?.baseUrl).toBe("http://remote:11434");
-      vi.unstubAllEnvs();
     });
 
     it("CODEREVIEWER_OLLAMA_URL throws ConfigError for malformed URL", async () => {
@@ -642,7 +644,18 @@ describe("loadConfig", () => {
         code: "invalid_url",
         name: "ConfigError",
       });
-      vi.unstubAllEnvs();
+    });
+
+    it("CODEREVIEWER_OLLAMA_URL throws ConfigError for non-http/https scheme", async () => {
+      vi.stubEnv("CODEREVIEWER_OLLAMA_URL", "file:///etc/passwd");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      await expect(loadConfig()).rejects.toThrow(ConfigError);
+      await expect(loadConfig()).rejects.toMatchObject({
+        code: "invalid_url",
+        name: "ConfigError",
+      });
     });
 
     it("CODEREVIEWER_CHUNKING=never sets config.chunking", async () => {
@@ -653,7 +666,6 @@ describe("loadConfig", () => {
       const config = await loadConfig();
 
       expect(config.chunking).toBe("never");
-      vi.unstubAllEnvs();
     });
 
     it("CODEREVIEWER_CHUNKING=always sets config.chunking", async () => {
@@ -664,7 +676,6 @@ describe("loadConfig", () => {
       const config = await loadConfig();
 
       expect(config.chunking).toBe("always");
-      vi.unstubAllEnvs();
     });
 
     it("config file provider overrides CODEREVIEWER_PROVIDER env var", async () => {
@@ -692,7 +703,6 @@ describe("loadConfig", () => {
 
       // Config file (layer 3) overrides env var (layer 2)
       expect(config.provider).toBe("copilot");
-      vi.unstubAllEnvs();
     });
 
     it("CODEREVIEWER_CHUNKING=invalid throws ConfigError", async () => {
@@ -705,7 +715,6 @@ describe("loadConfig", () => {
         code: "invalid_chunking",
         name: "ConfigError",
       });
-      vi.unstubAllEnvs();
     });
   });
 
