@@ -327,6 +327,41 @@ export interface ReviewStreamResult {
 }
 
 // ============================================================================
+// Status Types
+// ============================================================================
+
+/**
+ * JSON output for the `status` command.
+ */
+export interface StatusOutput {
+  provider: string;
+  model: {
+    configured: string;       // "auto" or explicit model ID
+    resolved: string | null;  // actual model ID after auto-select, null if failed/unavailable
+  };
+  chunking: "auto" | "always" | "never";
+  stream: boolean;
+  format: string;
+  config: {
+    global: { path: string; found: boolean; fallback?: string; fallbackFound?: boolean };
+    project: { path: string; found: boolean; fallback?: string; fallbackFound?: boolean };
+  };
+  auth: {
+    method: string;     // "env_token" | "copilot_config" | "gh_cli" | "none"
+    valid: boolean;
+    error?: string;
+  };
+  api: {
+    reachable: boolean;
+    latencyMs: number | null;
+    error?: string;
+  };
+  models: string[] | null;        // null when unreachable
+  modelsError: string | null;     // null when succeeded
+  healthy: boolean;
+}
+
+// ============================================================================
 // Constants
 // ============================================================================
 

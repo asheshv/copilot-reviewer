@@ -16,7 +16,9 @@ import {
   type CLIOverrides,
 } from "./lib/index.js";
 import { loadConfig } from "./lib/config.js";
+import { resolveToken } from "./lib/auth.js";
 import { createProvider } from "./lib/providers/index.js";
+import type { StatusOutput } from "./lib/types.js";
 import { review, reviewStream } from "./lib/review.js";
 import { detectHighSeverity, formatNdjsonChunk } from "./lib/formatter.js";
 
@@ -326,6 +328,292 @@ export async function handleChat(message: string): Promise<number> {
 }
 
 // ============================================================================
+// Handler: status
+// ============================================================================
+
+interface StatusOpts {
+  json?: boolean;
+  provider?: string;
+  ollamaUrl?: string;
+}
+
+/**
+ * Determine auth method by attempting token resolution and inspecting env / config files.
+ * Returns the StatusOutput auth section.
+ */
+async function resolveAuthStatus(): Promise<StatusOutput["auth"]> {
+  try {
+    // Attempt token resolution — if it throws, auth is invalid
+    const token = await resolveToken();
+
+    // Determine method by source priority (mirrors resolveToken logic)
+    let method: string;
+    if (process.env.GITHUB_TOKEN?.trim()) {
+      method = "env_token";
+    } else {
+      // Check copilot config files existence
+      const os = await import("os");
+      const fs = await import("fs/promises");
+      const home = os.homedir();
+      const configPaths = [
+        `${home}/.config/github-copilot/hosts.json`,
+        `${home}/.config/github-copilot/apps.json`,
+      ];
+      let foundConfig = false;
+      for (const p of configPaths) {
+        try {
+          const content = await fs.readFile(p, "utf-8");
+          const cfg = JSON.parse(content);
+          for (const [host, data] of Object.entries(cfg)) {
+            if (
+              (host === "github.com" || host.startsWith("github.com:")) &&
+              typeof data === "object" &&
+              data !== null &&
+              typeof (data as Record<string, unknown>).oauth_token === "string"
+            ) {
+              foundConfig = true;
+              break;
+            }
+          }
+          if (foundConfig) break;
+        } catch {
+          // file missing or unreadable
+        }
+      }
+      method = foundConfig ? "copilot_config" : "gh_cli";
+    }
+
+    return { method, valid: true };
+  } catch (err) {
+    return {
+      method: "none",
+      valid: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
+ * Compute config file existence info for the status display.
+ * Returns paths used by config.ts and whether each was found.
+ */
+async function resolveConfigStatus(): Promise<StatusOutput["config"]> {
+  const os = await import("os");
+  const fs = await import("fs/promises");
+  const path = await import("path");
+
+  const home = os.homedir();
+  const newGlobalDir = path.join(home, ".code-reviewer");
+  const oldGlobalDir = path.join(home, ".copilot-review");
+  const newGlobalPath = path.join(newGlobalDir, "config.json");
+  const oldGlobalPath = path.join(oldGlobalDir, "config.json");
+
+  async function fileExists(p: string): Promise<boolean> {
+    try { await fs.access(p); return true; } catch { return false; }
+  }
+
+  const newGlobalFound = await fileExists(newGlobalPath);
+  const oldGlobalFound = await fileExists(oldGlobalPath);
+
+  const globalEntry: StatusOutput["config"]["global"] = {
+    path: newGlobalPath,
+    found: newGlobalFound,
+  };
+  if (!newGlobalFound && oldGlobalFound) {
+    globalEntry.path = oldGlobalPath;
+    globalEntry.found = true;
+    globalEntry.fallback = oldGlobalPath;
+    globalEntry.fallbackFound = true;
+  } else if (!newGlobalFound) {
+    // Neither exists — report canonical new path
+    globalEntry.path = newGlobalPath;
+    globalEntry.found = false;
+    globalEntry.fallback = oldGlobalPath;
+    globalEntry.fallbackFound = false;
+  }
+
+  // Project config: try to detect git root
+  let projectEntry: StatusOutput["config"]["project"];
+  try {
+    const { execFile } = await import("child_process");
+    const { promisify } = await import("util");
+    const execFileAsync = promisify(execFile);
+    const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"]);
+    const gitRoot = stdout.trim();
+    const newProjectPath = path.join(gitRoot, ".code-reviewer", "config.json");
+    const oldProjectPath = path.join(gitRoot, ".copilot-review", "config.json");
+    const newProjectFound = await fileExists(newProjectPath);
+    const oldProjectFound = await fileExists(oldProjectPath);
+
+    projectEntry = { path: newProjectPath, found: newProjectFound };
+    if (!newProjectFound && oldProjectFound) {
+      projectEntry.path = oldProjectPath;
+      projectEntry.found = true;
+      projectEntry.fallback = oldProjectPath;
+      projectEntry.fallbackFound = true;
+    } else if (!newProjectFound) {
+      projectEntry.fallback = oldProjectPath;
+      projectEntry.fallbackFound = false;
+    }
+  } catch {
+    projectEntry = { path: "(not in a git repo)", found: false };
+  }
+
+  return { global: globalEntry, project: projectEntry };
+}
+
+export async function handleStatus(opts: StatusOpts): Promise<number> {
+  try {
+    const cliOverrides: CLIOverrides = {};
+    if (opts.provider) cliOverrides.provider = opts.provider;
+    if (opts.ollamaUrl) cliOverrides.ollamaUrl = opts.ollamaUrl;
+
+    const config = await loadConfig(cliOverrides);
+
+    // Auth check (independent of provider)
+    const auth = await resolveAuthStatus();
+
+    // Config paths
+    const configInfo = await resolveConfigStatus();
+
+    // Provider health check
+    let apiResult: StatusOutput["api"];
+    let provider: Awaited<ReturnType<typeof createProvider>> | null = null;
+    let healthy = auth.valid;
+
+    try {
+      provider = await createProvider(config);
+    } catch (err) {
+      // Provider creation failed — skip health check
+      apiResult = {
+        reachable: false,
+        latencyMs: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
+      healthy = false;
+    }
+
+    if (provider) {
+      try {
+        const health = await provider.healthCheck();
+        apiResult = {
+          reachable: health.ok,
+          latencyMs: health.latencyMs,
+          error: health.error,
+        };
+        if (!health.ok) healthy = false;
+      } catch (err) {
+        apiResult = {
+          reachable: false,
+          latencyMs: null,
+          error: err instanceof Error ? err.message : String(err),
+        };
+        healthy = false;
+      }
+    }
+
+    // Model resolution
+    let resolvedModel: string | null = null;
+    if (provider && apiResult!.reachable && config.model === "auto" && provider.autoSelect) {
+      try {
+        resolvedModel = await provider.autoSelect();
+      } catch {
+        // auto-select failed — leave null
+      }
+    }
+
+    // List models (only when reachable)
+    let models: string[] | null = null;
+    let modelsError: string | null = null;
+    if (provider && apiResult!.reachable) {
+      try {
+        const list = await provider.listModels();
+        models = list.map((m) => m.id);
+      } catch (err) {
+        modelsError = err instanceof Error ? err.message : String(err);
+        healthy = false;
+      }
+    }
+
+    const output: StatusOutput = {
+      provider: config.provider,
+      model: {
+        configured: config.model,
+        resolved: resolvedModel,
+      },
+      chunking: config.chunking,
+      stream: config.stream,
+      format: config.format,
+      config: configInfo,
+      auth,
+      api: apiResult!,
+      models,
+      modelsError,
+      healthy,
+    };
+
+    if (opts.json) {
+      process.stdout.write(JSON.stringify(output, null, 2) + "\n");
+    } else {
+      // Text mode — human-readable
+      const tick = "✓";
+      const cross = "✗";
+
+      const modelDisplay =
+        output.model.configured === "auto" && output.model.resolved
+          ? `auto → ${output.model.resolved} (auto-selected)`
+          : output.model.configured;
+
+      const authDisplay = output.auth.valid
+        ? `${output.auth.method} ${tick}`
+        : `${cross} — ${output.auth.error ?? "unknown error"}`;
+
+      const apiDisplay = output.api.reachable
+        ? `${tick} (${output.api.latencyMs}ms)`
+        : `${cross} — ${output.api.error ?? "unreachable"}`;
+
+      const globalConfigDisplay = output.config.global.found
+        ? `${output.config.global.path} (found)`
+        : `${output.config.global.path} (not found)`;
+
+      const projectConfigDisplay = output.config.project.found
+        ? `${output.config.project.path} (found)`
+        : `${output.config.project.path} (not found)`;
+
+      const lines = [
+        `  Provider:         ${output.provider}`,
+        `  Model:            ${modelDisplay}`,
+        `  Chunking:         ${output.chunking}`,
+        `  Stream:           ${output.stream}`,
+        `  Format:           ${output.format}`,
+        `  Config (global):  ${globalConfigDisplay}`,
+        `  Config (project): ${projectConfigDisplay}`,
+        `  Auth:             ${authDisplay}`,
+        `  API reachable:    ${apiDisplay}`,
+      ];
+
+      if (output.models) {
+        lines.push(`  Models:           ${output.models.join(", ")}`);
+      } else if (output.modelsError) {
+        lines.push(`  Models:           ${cross} — ${output.modelsError}`);
+      }
+
+      process.stdout.write(lines.join("\n") + "\n");
+    }
+
+    if (provider) {
+      provider.dispose();
+    }
+
+    return healthy ? EXIT_CODES.SUCCESS : 1;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`Error: ${message}\n`);
+    return EXIT_CODES.API_ERROR;
+  }
+}
+
+// ============================================================================
 // Build commander program (exported for testing)
 // ============================================================================
 
@@ -371,6 +659,17 @@ export function buildProgram(): Command {
     .description("Chat with Copilot")
     .action(async (message: string) => {
       const code = await handleChat(message);
+      process.exit(code);
+    });
+
+  program
+    .command("status")
+    .description("Show provider connectivity and configuration status")
+    .option("--json", "Output status as JSON")
+    .option("--provider <name>", "Review provider: copilot, ollama")
+    .option("--ollama-url <url>", "Ollama base URL")
+    .action(async (opts: StatusOpts) => {
+      const code = await handleStatus(opts);
       process.exit(code);
     });
 

@@ -75,6 +75,7 @@ import {
   handleReview,
   handleModels,
   handleChat,
+  handleStatus,
   buildProgram,
   mapErrorToExitCode,
 } from "../src/cli.js";
@@ -96,6 +97,9 @@ function makeConfig(overrides: Partial<ResolvedConfig> = {}): ResolvedConfig {
     prompt: "Review this code",
     defaultBase: "main",
     ignorePaths: [],
+    provider: "copilot",
+    providerOptions: {},
+    chunking: "auto",
     ...overrides,
   };
 }
@@ -631,6 +635,125 @@ describe("CLI", () => {
       const code = await handleChat("test");
 
       expect(code).toBe(4);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // handleStatus
+  // --------------------------------------------------------------------------
+  describe("handleStatus", () => {
+    beforeEach(() => {
+      // Reset provider healthCheck and listModels for status tests
+      mockProvider.healthCheck.mockResolvedValue({ ok: true, latencyMs: 120 });
+      mockListModels.mockResolvedValue([makeModelInfo("gpt-4.1"), makeModelInfo("claude-sonnet-4")]);
+      mockAutoSelect.mockResolvedValue("gpt-4.1");
+    });
+
+    it("returns exit 0 when provider is healthy and all checks pass", async () => {
+      const code = await handleStatus({});
+      expect(code).toBe(0);
+    });
+
+    it("returns exit 1 when healthCheck returns ok: false", async () => {
+      mockProvider.healthCheck.mockResolvedValue({
+        ok: false,
+        latencyMs: null,
+        error: "connection refused at http://localhost:11434",
+      });
+
+      const code = await handleStatus({});
+      expect(code).toBe(1);
+    });
+
+    it("--json flag outputs valid JSON with healthy: true", async () => {
+      const code = await handleStatus({ json: true });
+
+      expect(code).toBe(0);
+      const parsed = JSON.parse(stdoutOutput);
+      expect(parsed.healthy).toBe(true);
+      expect(parsed.provider).toBe("copilot");
+      expect(parsed.api.reachable).toBe(true);
+      expect(parsed.api.latencyMs).toBe(120);
+    });
+
+    it("--json output has api.reachable: false when provider unreachable", async () => {
+      mockProvider.healthCheck.mockResolvedValue({
+        ok: false,
+        latencyMs: null,
+        error: "connection refused",
+      });
+
+      const code = await handleStatus({ json: true });
+
+      expect(code).toBe(1);
+      const parsed = JSON.parse(stdoutOutput);
+      expect(parsed.healthy).toBe(false);
+      expect(parsed.api.reachable).toBe(false);
+      expect(parsed.api.latencyMs).toBeNull();
+      expect(parsed.api.error).toBe("connection refused");
+    });
+
+    it("shows model.resolved after auto-select when model is 'auto'", async () => {
+      mockLoadConfig.mockResolvedValue(makeConfig({ model: "auto" }));
+      mockAutoSelect.mockResolvedValue("gpt-4.1");
+
+      const code = await handleStatus({ json: true });
+
+      expect(code).toBe(0);
+      const parsed = JSON.parse(stdoutOutput);
+      expect(parsed.model.configured).toBe("auto");
+      expect(parsed.model.resolved).toBe("gpt-4.1");
+    });
+
+    it("handles provider without autoSelect — no resolution attempt", async () => {
+      // Remove autoSelect from provider
+      const { autoSelect, ...providerWithoutAutoSelect } = mockProvider;
+      const { createProvider: mockCreateProvider } = await import("../src/lib/providers/index.js");
+      (mockCreateProvider as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerWithoutAutoSelect);
+
+      mockLoadConfig.mockResolvedValue(makeConfig({ model: "auto" }));
+
+      const code = await handleStatus({ json: true });
+
+      expect(code).toBe(0);
+      const parsed = JSON.parse(stdoutOutput);
+      // model.resolved should be null since autoSelect not available
+      expect(parsed.model.resolved).toBeNull();
+    });
+
+    it("text mode prints human-readable lines to stdout", async () => {
+      const code = await handleStatus({});
+
+      expect(code).toBe(0);
+      expect(stdoutOutput).toContain("Provider:");
+      expect(stdoutOutput).toContain("copilot");
+      expect(stdoutOutput).toContain("API reachable:");
+    });
+
+    it("--json output includes models list when reachable", async () => {
+      const code = await handleStatus({ json: true });
+
+      expect(code).toBe(0);
+      const parsed = JSON.parse(stdoutOutput);
+      expect(parsed.models).toEqual(["gpt-4.1", "claude-sonnet-4"]);
+      expect(parsed.modelsError).toBeNull();
+    });
+
+    it("--json output has models: null and modelsError set when listModels throws", async () => {
+      mockListModels.mockRejectedValue(new ClientError("rate_limited", "rate limited", true));
+
+      const code = await handleStatus({ json: true });
+
+      // Still exit 1 because models fetch failed (unhealthy)
+      const parsed = JSON.parse(stdoutOutput);
+      expect(parsed.models).toBeNull();
+      expect(parsed.modelsError).toContain("rate limited");
+    });
+
+    it("has status subcommand registered in buildProgram", () => {
+      const program = buildProgram();
+      const statusCmd = program.commands.find((c) => c.name() === "status");
+      expect(statusCmd).toBeDefined();
     });
   });
 
