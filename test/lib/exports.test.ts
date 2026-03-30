@@ -34,6 +34,7 @@ describe("public API exports", () => {
   it("exports provider classes", () => {
     expect(lib.CopilotProvider).toBeDefined();
     expect(lib.OpenAIChatProvider).toBeDefined();
+    expect(lib.OllamaProvider).toBeDefined();
   });
 
   it("exports streaming functions", () => {
@@ -53,6 +54,9 @@ describe("public API exports", () => {
   it("exports prompt functions", () => {
     expect(lib.loadBuiltInPrompt).toBeTypeOf("function");
     expect(lib.assembleUserMessage).toBeTypeOf("function");
+    expect(lib.assembleChunkMessage).toBeTypeOf("function");
+    expect(lib.assembleReduceMessage).toBeTypeOf("function");
+    expect(lib.getReduceSystemPrompt).toBeTypeOf("function");
   });
 
   it("exports formatter functions", () => {
@@ -64,5 +68,6 @@ describe("public API exports", () => {
   it("exports review functions", () => {
     expect(lib.review).toBeTypeOf("function");
     expect(lib.reviewStream).toBeTypeOf("function");
+    expect(lib.shouldChunk).toBeTypeOf("function");
   });
 });

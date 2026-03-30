@@ -14,6 +14,7 @@ export { createProvider, availableProviders } from "./providers/index.js";
 export type { ReviewProvider } from "./providers/types.js";
 export { CopilotProvider } from "./providers/copilot-provider.js";
 export { OpenAIChatProvider } from "./providers/openai-chat-provider.js";
+export { OllamaProvider } from "./providers/ollama-provider.js";
 
 // Diff
 export { collectDiff } from "./diff.js";
@@ -22,10 +23,10 @@ export { collectDiff } from "./diff.js";
 export { loadConfig } from "./config.js";
 
 // Prompt
-export { loadBuiltInPrompt, assembleUserMessage } from "./prompt.js";
+export { loadBuiltInPrompt, assembleUserMessage, assembleChunkMessage, assembleReduceMessage, getReduceSystemPrompt } from "./prompt.js";
 
 // Formatter
 export { format, formatNdjsonChunk, detectHighSeverity } from "./formatter.js";
 
 // Review
-export { review, reviewStream } from "./review.js";
+export { review, reviewStream, shouldChunk } from "./review.js";
