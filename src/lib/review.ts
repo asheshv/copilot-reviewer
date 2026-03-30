@@ -116,12 +116,8 @@ export async function reviewStream(
   // Step 5: Call streaming API
   const rawStream = provider.chatStream(request);
 
-  const result: ReviewStreamResult = {
-    stream: undefined as unknown as AsyncIterable<string>, // set below
-    warnings,
-    diff,
-    model: modelInfo.id,
-  };
+  // Capture usage lazily via closure — populated when the "done" chunk is consumed
+  const usageCapture: { value?: { totalTokens: number } } = {};
 
   // Convert StreamChunk to plain text strings, capturing usage from the "done" chunk
   async function* textStream(): AsyncIterable<string> {
@@ -130,13 +126,18 @@ export async function reviewStream(
         yield chunk.text;
       }
       if (chunk.type === "done" && chunk.usage) {
-        result.usage = chunk.usage;
+        usageCapture.value = chunk.usage;
       }
     }
   }
 
-  result.stream = textStream();
-  return result;
+  return {
+    stream: textStream(),
+    warnings,
+    diff,
+    model: modelInfo.id,
+    get usage() { return usageCapture.value; },
+  };
 }
 
 // ============================================================================
@@ -164,12 +165,13 @@ async function resolveModel(
 ): Promise<ModelInfo> {
   const modelId = options.model ?? options.config.model;
 
-  if (!modelId || modelId === "auto") {
+  if (modelId == null || modelId.trim() === "" || modelId === "auto") {
     if (!provider.autoSelect) {
       throw new ConfigError(
         "model_required",
         `Provider '${provider.name}' requires an explicit model. Use --model or set model in config.`,
         "",
+        true,
       );
     }
     const selectedId = await provider.autoSelect();

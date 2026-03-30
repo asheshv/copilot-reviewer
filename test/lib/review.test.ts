@@ -46,11 +46,47 @@ const MOCK_MODEL_INFO: ModelInfo = {
   tokenizer: "cl100k_base",
 };
 
+class MockProvider implements ReviewProvider {
+  readonly name = "mock";
+  chatCalls: ChatRequest[] = [];
+  autoSelect?: () => Promise<string>;
+
+  private _chatResponse: ChatResponse;
+  private _streamChunks: StreamChunk[];
+
+  constructor(chatResponse: ChatResponse, streamChunks: StreamChunk[]) {
+    this._chatResponse = chatResponse;
+    this._streamChunks = streamChunks;
+  }
+
+  initialize = vi.fn().mockResolvedValue(undefined);
+
+  chat = vi.fn().mockImplementation((req: ChatRequest) => {
+    this.chatCalls.push(req);
+    return Promise.resolve(this._chatResponse);
+  });
+
+  chatStream = vi.fn().mockImplementation((_req: ChatRequest) => {
+    const chunks = this._streamChunks;
+    async function* gen() {
+      for (const chunk of chunks) {
+        yield chunk;
+      }
+    }
+    return gen();
+  });
+
+  listModels = vi.fn().mockResolvedValue([MOCK_MODEL_INFO]);
+  validateModel = vi.fn().mockResolvedValue(MOCK_MODEL_INFO);
+  dispose = vi.fn();
+  healthCheck = vi.fn().mockResolvedValue({ ok: true, latencyMs: 1 });
+}
+
 function createMockProvider(overrides: {
   chatResponse?: ChatResponse;
   streamChunks?: StreamChunk[];
   hasAutoSelect?: boolean;
-} = {}): ReviewProvider & { chatCalls: ChatRequest[] } {
+} = {}): MockProvider {
   const chatResponse: ChatResponse = overrides.chatResponse ?? {
     content: "### HIGH Security issue found",
     model: "mock-model",
@@ -62,39 +98,10 @@ function createMockProvider(overrides: {
     { type: "done", usage: { totalTokens: 42 }, model: "mock-model" },
   ];
 
-  const chatCalls: ChatRequest[] = [];
-
-  const provider: ReviewProvider & { chatCalls: ChatRequest[] } = {
-    name: "mock",
-    chatCalls,
-
-    initialize: vi.fn().mockResolvedValue(undefined),
-
-    chat: vi.fn().mockImplementation((req: ChatRequest) => {
-      chatCalls.push(req);
-      return Promise.resolve(chatResponse);
-    }),
-
-    chatStream: vi.fn().mockImplementation((_req: ChatRequest) => {
-      async function* gen() {
-        for (const chunk of streamChunks) {
-          yield chunk;
-        }
-      }
-      return gen();
-    }),
-
-    listModels: vi.fn().mockResolvedValue([MOCK_MODEL_INFO]),
-
-    validateModel: vi.fn().mockResolvedValue(MOCK_MODEL_INFO),
-
-    dispose: vi.fn(),
-
-    healthCheck: vi.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
-  };
+  const provider = new MockProvider(chatResponse, streamChunks);
 
   if (overrides.hasAutoSelect !== false) {
-    (provider as any).autoSelect = vi.fn().mockResolvedValue("mock-model");
+    provider.autoSelect = vi.fn().mockResolvedValue("mock-model");
   }
 
   return provider;
@@ -123,7 +130,7 @@ describe("review()", () => {
     chunking: "auto",
   };
 
-  let mockProvider: ReviewProvider & { chatCalls: ChatRequest[] };
+  let mockProvider: MockProvider;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -202,7 +209,7 @@ describe("review()", () => {
 
       // API should not be called
       expect(mockProvider.chat).not.toHaveBeenCalled();
-      expect((mockProvider as any).autoSelect).not.toHaveBeenCalled();
+      expect(mockProvider.autoSelect).not.toHaveBeenCalled();
       expect(mockProvider.validateModel).not.toHaveBeenCalled();
     });
   });
@@ -217,7 +224,7 @@ describe("review()", () => {
 
       await review(options, mockProvider);
 
-      expect((mockProvider as any).autoSelect).toHaveBeenCalled();
+      expect(mockProvider.autoSelect).toHaveBeenCalled();
       expect(mockProvider.validateModel).toHaveBeenCalledWith("mock-model");
     });
 
@@ -230,7 +237,7 @@ describe("review()", () => {
 
       await review(options, mockProvider);
 
-      expect((mockProvider as any).autoSelect).not.toHaveBeenCalled();
+      expect(mockProvider.autoSelect).not.toHaveBeenCalled();
       expect(mockProvider.validateModel).toHaveBeenCalledWith("mock-model");
     });
 
@@ -268,7 +275,7 @@ describe("review()", () => {
 
       const result = await review(options, mockProvider);
 
-      expect((mockProvider as any).autoSelect).toHaveBeenCalled();
+      expect(mockProvider.autoSelect).toHaveBeenCalled();
       expect(result.model).toBe("mock-model");
     });
   });
@@ -301,7 +308,7 @@ describe("review()", () => {
       const smallLimitModel: ModelInfo = { ...MOCK_MODEL_INFO, maxPromptTokens: 8000 };
       vi.mocked(mockProvider.validateModel).mockResolvedValue(smallLimitModel);
 
-      // 8000 * 0.85 = 6800 tokens * 4 chars/token = 27200 chars
+      // 8000 * 0.80 = 6400 tokens * 4 chars/token = 25600 chars — use 27000 chars to land at ~85%
       const largeDiff: DiffResult = {
         raw: "x".repeat(25000),
         files: [{ path: "test.ts", status: "modified", insertions: 100, deletions: 50 }],
@@ -426,7 +433,7 @@ describe("review()", () => {
       const result = await review(options, providerWithEmptyResponse);
 
       // Content should be formatted (not raw empty string) — formatter adds structure
-      expect(result.content).toBeTruthy();
+      expect(result.content).toBe("formatted:markdown:");
       expect(result.warnings).toContain("Copilot returned no findings.");
     });
   });
@@ -455,7 +462,7 @@ describe("reviewStream()", () => {
     chunking: "auto",
   };
 
-  let mockProvider: ReviewProvider & { chatCalls: ChatRequest[] };
+  let mockProvider: MockProvider;
 
   beforeEach(() => {
     vi.clearAllMocks();
