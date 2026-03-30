@@ -7,11 +7,9 @@ import { promisify } from "util";
 import { loadBuiltInPrompt } from "./prompt.js";
 import { ConfigError } from "./types.js";
 import type { ConfigFile, ResolvedConfig, CLIOverrides } from "./types.js";
+import { availableProviders } from "./providers/index.js";
 
 const execFileAsync = promisify(execFile);
-
-/** Known providerOptions keys for typo suggestions */
-const KNOWN_PROVIDER_OPTION_KEYS = ["copilot", "ollama"];
 
 /** Levenshtein distance between two strings */
 function levenshtein(a: string, b: string): number {
@@ -299,9 +297,10 @@ async function loadConfigLayer(
     if (jsonConfig.chunking !== undefined) result.chunking = jsonConfig.chunking;
     if (jsonConfig.providerOptions !== undefined) {
       // Validate known keys and warn on unknown
+      const knownKeys = availableProviders();
       for (const key of Object.keys(jsonConfig.providerOptions)) {
-        if (!KNOWN_PROVIDER_OPTION_KEYS.includes(key)) {
-          const suggestion = KNOWN_PROVIDER_OPTION_KEYS.find((k) => levenshtein(key, k) <= 2);
+        if (!knownKeys.includes(key)) {
+          const suggestion = knownKeys.find((k) => levenshtein(key, k) <= 2);
           const hint = suggestion ? ` Did you mean '${suggestion}'?` : "";
           process.stderr.write(`Warning: unknown providerOptions key '${key}'.${hint}\n`);
         }

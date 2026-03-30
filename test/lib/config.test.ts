@@ -656,6 +656,45 @@ describe("loadConfig", () => {
       vi.unstubAllEnvs();
     });
 
+    it("CODEREVIEWER_CHUNKING=always sets config.chunking", async () => {
+      vi.stubEnv("CODEREVIEWER_CHUNKING", "always");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig();
+
+      expect(config.chunking).toBe("always");
+      vi.unstubAllEnvs();
+    });
+
+    it("config file provider overrides CODEREVIEWER_PROVIDER env var", async () => {
+      vi.stubEnv("CODEREVIEWER_PROVIDER", "ollama");
+      mockGitRoot(null);
+      const globalJson = '{ "provider": "copilot" }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json")) {
+          return globalJson;
+        }
+        throw createENOENT();
+      });
+
+      const config = await loadConfig();
+
+      // Config file (layer 3) overrides env var (layer 2)
+      expect(config.provider).toBe("copilot");
+      vi.unstubAllEnvs();
+    });
+
     it("CODEREVIEWER_CHUNKING=invalid throws ConfigError", async () => {
       vi.stubEnv("CODEREVIEWER_CHUNKING", "invalid");
       mockGitRoot(null);
