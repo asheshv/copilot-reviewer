@@ -750,6 +750,31 @@ describe("CLI", () => {
       expect(parsed.modelsError).toContain("rate limited");
     });
 
+    it("returns exit 1 when createProvider throws AuthError", async () => {
+      const { createProvider: mockCreateProvider } = await import("../src/lib/providers/index.js");
+      (mockCreateProvider as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new AuthError("no_token", "no GitHub token found", false),
+      );
+
+      const code = await handleStatus({});
+      expect(code).toBe(1);
+    });
+
+    it("--json has healthy: false and api.reachable: false when createProvider throws AuthError", async () => {
+      const { createProvider: mockCreateProvider } = await import("../src/lib/providers/index.js");
+      (mockCreateProvider as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new AuthError("no_token", "no GitHub token found", false),
+      );
+
+      const code = await handleStatus({ json: true });
+
+      expect(code).toBe(1);
+      const parsed = JSON.parse(stdoutOutput);
+      expect(parsed.healthy).toBe(false);
+      expect(parsed.api.reachable).toBe(false);
+      expect(parsed.api.error).toContain("no GitHub token found");
+    });
+
     it("has status subcommand registered in buildProgram", () => {
       const program = buildProgram();
       const statusCmd = program.commands.find((c) => c.name() === "status");
