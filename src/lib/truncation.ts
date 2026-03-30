@@ -225,6 +225,7 @@ function compressMediumToSummary(text: string): string {
       }
       result.push(line);
     } else {
+      blankCount = 0; // reset on non-blank line
       result.push(line);
     }
   }
@@ -296,14 +297,43 @@ function applyRound3(chunks: string[]): { chunks: string[]; mediumCompressed: nu
 // Round 4: Proportional truncation
 // ---------------------------------------------------------------------------
 
-function applyRound4(chunks: string[], availableBudget: number): string[] {
-  const perChunkBudget = Math.floor(availableBudget / Math.max(chunks.length, 1));
-  const maxChars = perChunkBudget * 4;
+function applyRound4(chunks: string[], availableChars: number): { chunks: string[]; warning: string } {
+  const charsPerChunk = Math.floor(availableChars / chunks.length);
+  let pathological = false;
 
-  return chunks.map(chunk => {
-    if (chunk.length <= maxChars) return chunk;
-    return chunk.slice(0, maxChars);
+  const result = chunks.map(chunk => {
+    if (chunk.length <= charsPerChunk) return chunk;
+
+    // Extract HIGH blocks first — must not be truncated
+    const lines = chunk.split("\n");
+    const highLines: string[] = [];
+    const otherLines: string[] = [];
+    let inHigh = false;
+    for (const line of lines) {
+      if (/^(###\s*HIGH|\[HIGH\]|\*\*HIGH\*\*)/i.test(line.trim())) inHigh = true;
+      if (inHigh) highLines.push(line);
+      else otherLines.push(line);
+    }
+
+    const highContent = highLines.join("\n");
+    const highChars = highContent.length;
+    const remainingChars = Math.max(0, charsPerChunk - highChars);
+
+    if (highChars > charsPerChunk) {
+      // Pathological: HIGH alone exceeds budget — keep HIGH intact, drop other content
+      pathological = true;
+      return highContent.trim();
+    }
+
+    const otherContent = otherLines.join("\n").slice(0, remainingChars);
+    return (otherContent + "\n" + highContent).trim();
   });
+
+  const warning = pathological
+    ? `Reduce pass: proportional truncation applied (${chunks.length} chunks) — HIGH content alone exceeds per-chunk budget in some chunks`
+    : `Reduce pass: proportional truncation applied (${chunks.length} chunks)`;
+
+  return { chunks: result, warning };
 }
 
 // ============================================================================
@@ -369,11 +399,10 @@ export function truncateForReduce(
     }
   }
 
-  // --- Round 4: proportional truncation ---
-  current = applyRound4(current, availableBudget);
-  warnings.push(
-    `Reduce pass: proportional truncation applied (${current.length} chunks)`
-  );
+  // --- Round 4: proportional truncation (HIGH content preserved) ---
+  const r4 = applyRound4(current, availableBudget * 4);
+  current = r4.chunks;
+  warnings.push(r4.warning);
 
   return { truncated: current, warnings, didTruncate: true };
 }

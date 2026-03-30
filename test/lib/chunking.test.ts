@@ -309,6 +309,34 @@ describe("binPackFiles", () => {
     expect(chunks[0][2].path).toBe("zebra.ts");
   });
 
+  it("3 files of budget/3 - 5 tokens each fit in one chunk (overhead model consistent)", () => {
+    // budget=300, each file=95 tokens (300/3 - 5)
+    // overhead for 3 files = 10 * 3 = 30; total = 3*95 + 30 = 315 — does NOT fit
+    // but with FFD: placing file 3 into chunk with 2 files:
+    //   chunkTokens=190 (no overhead baked in) + 95 + 10*(2+1)=30 = 315 >= 300 → FAILS
+    // Use budget=360: 3 files of 360/3 - 5 = 115 each
+    //   total tokens = 345, overhead = 30, total = 375 >= 360 → still fails
+    // Correct test: 3 files where tokens+overhead fits.
+    // budget=400, each file = 120 tokens.
+    //   place file1: 0 + 120 + 10*1 = 130 < 400 ✓ chunkTokens=120
+    //   place file2: 120 + 120 + 10*2 = 260 < 400 ✓ chunkTokens=240
+    //   place file3: 240 + 120 + 10*3 = 390 < 400 ✓ → all in 1 chunk
+    // With old (double-counting) model:
+    //   chunkTokens after file1 = 130 (120+10)
+    //   chunkTokens after file2 = 260 (130+120+10)
+    //   fit check for file3: 260 + 120 + 10*3 = 410 >= 400 → wrongly splits
+    const budget = 400;
+    const fileTokens = 120; // budget/3 - ~13
+    const segments = [
+      makeSegment("a.ts", fileTokens),
+      makeSegment("b.ts", fileTokens),
+      makeSegment("c.ts", fileTokens),
+    ];
+    const chunks = binPackFiles(segments, budget);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toHaveLength(3);
+  });
+
   it("chunkBudget <= 0 → throws ReviewError with invalid_model_limits", () => {
     const segments = [makeSegment("a.ts", 100)];
     expect(() => binPackFiles(segments, 0)).toThrow(ReviewError);

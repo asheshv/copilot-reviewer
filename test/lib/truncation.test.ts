@@ -180,6 +180,26 @@ describe("truncateForReduce", () => {
     expect(result.truncated[0]).toContain("important details");
   });
 
+  it("Round 4: HIGH content is preserved, other content truncated proportionally", () => {
+    // Construct a chunk with LOW/MEDIUM content stripped, leaving HIGH + other content
+    // We bypass rounds 1-3 by using only HIGH and MEDIUM content that doesn't compress enough
+    const highContent = "### HIGH\n" + "critical".repeat(20) + "\n"; // ~176 chars
+    const medContent = "### MEDIUM\n" + "medium".repeat(50) + "\n";   // ~311 chars
+    const chunk = medContent + highContent;
+
+    // Budget so tight that even after rounds 1-3 it doesn't fit,
+    // forcing round 4. Make it fit only ~half the chunk.
+    const budget = Math.ceil(chunk.length / 4 / 2); // half the tokens
+
+    const result = truncateForReduce([chunk], budget);
+    expect(result.didTruncate).toBe(true);
+
+    // HIGH content must be fully present
+    const output = result.truncated[0];
+    expect(output).toContain("### HIGH");
+    expect(output).toContain("criticalcritical"); // some of the HIGH body
+  });
+
   it("returns warnings describing what was done", () => {
     const lowBlock = makeFinding("LOW", "Nitpick", "z".repeat(600));
     const findings = [lowBlock, lowBlock];

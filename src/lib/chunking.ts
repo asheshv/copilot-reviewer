@@ -215,7 +215,7 @@ export function binPackFiles(
       const overhead = 10 * (filesInChunk + 1);
       if (chunkTokens[i] + seg.estimatedTokens + overhead < chunkBudget) {
         chunks[i].push(seg);
-        chunkTokens[i] += seg.estimatedTokens + 10;
+        chunkTokens[i] += seg.estimatedTokens;
         placed = true;
         break;
       }
@@ -226,7 +226,7 @@ export function binPackFiles(
       const overheadAlone = 10 * 1;
       if (seg.estimatedTokens + overheadAlone < chunkBudget) {
         chunks.push([seg]);
-        chunkTokens.push(seg.estimatedTokens + 10);
+        chunkTokens.push(seg.estimatedTokens);
       } else {
         // File alone exceeds budget → split by hunks
         const hunkChunks = splitFileByHunks(seg, chunkBudget);
@@ -295,7 +295,7 @@ export function splitFileByHunks(
         // Add hunk as a synthetic FileSegment into this chunk
         const hunkSeg = hunkToFileSegment(segment, hunkToPlace);
         chunks[i].push(hunkSeg);
-        chunkTokens[i] += hunkToPlace.estimatedTokens + 10;
+        chunkTokens[i] += hunkToPlace.estimatedTokens;
         placed = true;
         break;
       }
@@ -304,7 +304,7 @@ export function splitFileByHunks(
     if (!placed) {
       const hunkSeg = hunkToFileSegment(segment, hunkToPlace);
       chunks.push([hunkSeg]);
-      chunkTokens.push(hunkToPlace.estimatedTokens + 10);
+      chunkTokens.push(hunkToPlace.estimatedTokens);
     }
   }
 
