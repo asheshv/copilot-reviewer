@@ -3,6 +3,7 @@
 import { ConfigError, type ResolvedConfig } from "../types.js";
 import { createDefaultAuthProvider } from "../auth.js";
 import { CopilotProvider } from "./copilot-provider.js";
+import { OllamaProvider } from "./ollama-provider.js";
 import type { ReviewProvider } from "./types.js";
 
 export type { ReviewProvider } from "./types.js";
@@ -11,7 +12,10 @@ type ProviderFactory = (config: ResolvedConfig) => ReviewProvider;
 
 const PROVIDERS: Record<string, ProviderFactory> = {
   copilot: (_config) => new CopilotProvider(createDefaultAuthProvider()),
-  // ollama added in Task 17
+  ollama: (config) => {
+    const url = (config.providerOptions as any)?.ollama?.baseUrl ?? "http://localhost:11434";
+    return new OllamaProvider(url);
+  },
 };
 
 export async function createProvider(config: ResolvedConfig): Promise<ReviewProvider> {

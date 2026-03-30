@@ -26,12 +26,30 @@ vi.mock("../../../src/lib/auth.js", () => ({
   }),
 }));
 
+vi.mock("../../../src/lib/providers/ollama-provider.js", () => {
+  const MockOllamaProvider = vi.fn().mockImplementation((baseUrl: string) => ({
+    name: "ollama",
+    _baseUrl: baseUrl,
+    initialize: vi.fn().mockResolvedValue(undefined),
+    chat: vi.fn(),
+    chatStream: vi.fn(),
+    listModels: vi.fn(),
+    validateModel: vi.fn(),
+    dispose: vi.fn(),
+    healthCheck: vi.fn(),
+  }));
+  return { OllamaProvider: MockOllamaProvider };
+});
+
 // Import after mocks are set up
 const { createProvider, availableProviders } = await import(
   "../../../src/lib/providers/index.js"
 );
 const { CopilotProvider } = await import(
   "../../../src/lib/providers/copilot-provider.js"
+);
+const { OllamaProvider } = await import(
+  "../../../src/lib/providers/ollama-provider.js"
 );
 
 const baseConfig: ResolvedConfig = {
@@ -124,7 +142,38 @@ describe("createProvider", () => {
 });
 
 describe("availableProviders", () => {
-  it("returns [\"copilot\"]", () => {
-    expect(availableProviders()).toEqual(["copilot"]);
+  it("returns [\"copilot\", \"ollama\"]", () => {
+    expect(availableProviders()).toEqual(["copilot", "ollama"]);
+  });
+});
+
+describe("createProvider — ollama", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns an OllamaProvider instance for provider=ollama", async () => {
+    const provider = await createProvider({ ...baseConfig, provider: "ollama" });
+    expect(OllamaProvider).toHaveBeenCalledTimes(1);
+    expect(provider.name).toBe("ollama");
+  });
+
+  it("uses the default URL http://localhost:11434 when no providerOptions given", async () => {
+    await createProvider({ ...baseConfig, provider: "ollama", providerOptions: {} });
+    expect(OllamaProvider).toHaveBeenCalledWith("http://localhost:11434");
+  });
+
+  it("uses the custom URL from providerOptions.ollama.baseUrl", async () => {
+    await createProvider({
+      ...baseConfig,
+      provider: "ollama",
+      providerOptions: { ollama: { baseUrl: "http://custom:1234" } },
+    });
+    expect(OllamaProvider).toHaveBeenCalledWith("http://custom:1234");
+  });
+
+  it("calls initialize() on the created OllamaProvider", async () => {
+    const provider = await createProvider({ ...baseConfig, provider: "ollama" });
+    expect(provider.initialize).toHaveBeenCalledTimes(1);
   });
 });
