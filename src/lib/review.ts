@@ -6,6 +6,7 @@ import { format } from "./formatter.js";
 import { splitDiffByFile, binPackFiles } from "./chunking.js";
 import { truncateForReduce } from "./truncation.js";
 import {
+  ClientError,
   ConfigError,
   DiffError,
   ReviewError,
@@ -166,16 +167,62 @@ async function chunkedReview(
   for (let i = 0; i < totalChunks; i++) {
     const chunkSegments = chunks[i];
     const chunkFiles = chunkSegments.map((s) => s.path);
-    const chunkMessage = assembleChunkMessage(i, totalChunks, chunkSegments, "");
 
-    const request: ChatRequest = {
+    const makeRequest = (segs: typeof chunkSegments, chunkIdx: number, chunkOf: number): ChatRequest => ({
       model: modelInfo.id,
       systemPrompt: options.config.prompt,
-      messages: [{ role: "user", content: chunkMessage }],
+      messages: [{ role: "user", content: assembleChunkMessage(chunkIdx, chunkOf, segs, "") }],
       stream: false,
-    };
+    });
 
-    const response = await provider.chat(request);
+    let response;
+    try {
+      response = await provider.chat(makeRequest(chunkSegments, i, totalChunks));
+    } catch (err) {
+      if (err instanceof ClientError && isContextLengthError(err)) {
+        // Re-bin the chunk's files into sub-chunks with reduced budget
+        const reducedBudget = Math.floor(chunkBudget * 0.8);
+        const subChunks = binPackFiles(chunkSegments, reducedBudget);
+
+        for (let j = 0; j < subChunks.length; j++) {
+          const subSegs = subChunks[j];
+          const subFiles = subSegs.map((s) => s.path);
+          let subResponse;
+          try {
+            subResponse = await provider.chat(makeRequest(subSegs, j, subChunks.length));
+          } catch (retryErr) {
+            throw new ReviewError(
+              "chunk_failed",
+              `Review failed on chunk ${i + 1}/${totalChunks} (sub-chunk ${j + 1}/${subChunks.length}) (${subFiles.join(", ")}): ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+              false,
+              retryErr instanceof Error ? retryErr : undefined,
+            );
+          }
+
+          if (process.stderr.isTTY) {
+            const tokenStr = subResponse.usage?.totalTokens ?? 0;
+            process.stderr.write(
+              `Reviewing chunk ${i + 1}/${totalChunks} sub-chunk ${j + 1}/${subChunks.length} (${subFiles.join(", ")})... done (${tokenStr} tokens)\n`,
+            );
+          }
+
+          chunkFindings.push({
+            files: subFiles,
+            content: subResponse.content || "",
+            usage: subResponse.usage ?? { totalTokens: 0 },
+          });
+        }
+        // Sub-chunks already pushed — skip the normal push below
+        continue;
+      } else {
+        throw new ReviewError(
+          "chunk_failed",
+          `Review failed on chunk ${i + 1}/${totalChunks} (${chunkFiles.join(", ")}): ${err instanceof Error ? err.message : String(err)}`,
+          false,
+          err instanceof Error ? err : undefined,
+        );
+      }
+    }
 
     if (process.stderr.isTTY) {
       const tokenStr = response.usage?.totalTokens ?? 0;
@@ -358,6 +405,18 @@ export async function reviewStream(
 // ============================================================================
 // Internal helpers
 // ============================================================================
+
+/**
+ * Returns true if the error looks like a context-length / payload-too-large error
+ * from the upstream API.
+ */
+function isContextLengthError(err: ClientError): boolean {
+  const code = err.code ?? "";
+  const msg = err.message ?? "";
+  if (code === "context_length_exceeded" || code === "payload_too_large") return true;
+  if (err.status === 413) return true;
+  return /context.{0,20}length|too.{0,10}long|payload.{0,10}large/i.test(msg);
+}
 
 /**
  * Collect diff with ignorePaths merged from config into DiffOptions.

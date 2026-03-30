@@ -11,7 +11,7 @@ import type {
   ChatRequest,
   ChunkedReviewResult,
 } from "../../src/lib/types.js";
-import { DiffError, ReviewError } from "../../src/lib/types.js";
+import { ClientError, DiffError, ReviewError } from "../../src/lib/types.js";
 import type { ReviewProvider } from "../../src/lib/providers/types.js";
 
 // Mock all dependencies
@@ -960,5 +960,94 @@ describe("review() — map-reduce chunked pipeline", () => {
     // Should still succeed with fallback content
     expect(result.content).toContain("Aggregation failed");
     expect(result.warnings.some(w => w.includes("reduce") || w.includes("Reduce"))).toBe(true);
+  });
+
+  it("MAP: context-length error on chunk → re-bins with 0.8x budget and retries sub-chunks", async () => {
+    const provider = createMockProvider({ modelInfo: modelInfo10k });
+    vi.mocked(collectDiff).mockResolvedValue(largeDiff);
+
+    // Two chunks: first chunk [segA, segB] will fail with context-length error
+    // binPackFiles is called first with chunkBudget (initial packing), then with
+    // reducedBudget when the context-length retry happens
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB, segC], warnings: [] });
+    vi.mocked(binPackFiles)
+      .mockReturnValueOnce([[segA, segB], [segC]])   // initial bin-pack: 2 chunks
+      .mockReturnValueOnce([[segA], [segB]]);          // retry bin-pack for chunk 0 with 0.8x budget
+
+    const contextLengthErr = new ClientError(
+      "context_length_exceeded",
+      "This model's maximum context length is exceeded.",
+      false,
+    );
+
+    let callCount = 0;
+    vi.mocked(provider.chat).mockImplementation((req: ChatRequest) => {
+      provider.chatCalls.push(req);
+      callCount++;
+      // First call (chunk 0) throws context-length error
+      if (callCount === 1) return Promise.reject(contextLengthErr);
+      // Sub-chunk retries and chunk 1 all succeed
+      return Promise.resolve({
+        content: `finding ${callCount}`,
+        model: "mock-model",
+        usage: { totalTokens: 5 },
+      });
+    });
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "always" },
+      model: "mock-model",
+    };
+
+    const result = await review(options, provider);
+
+    // binPackFiles should have been called twice: initial + retry
+    expect(binPackFiles).toHaveBeenCalledTimes(2);
+
+    // The second call to binPackFiles should use the reduced budget (0.8x of chunkBudget)
+    // chunkBudget = 10000 - Math.floor(26/4) - 150 = 10000 - 6 - 150 = 9844
+    // reducedBudget = Math.floor(9844 * 0.8) = 7875
+    const calls = vi.mocked(binPackFiles).mock.calls;
+    expect(calls[1][1]).toBe(Math.floor(9844 * 0.8));
+
+    // 3 sub-chunks from rebinning + chunk 1 + reduce = 4 chat calls (initial fails + 3 succeed for map + 1 reduce)
+    // Actually: 1 fail + 2 sub-chunk successes + 1 chunk[segC] success + 1 reduce = 5 calls total
+    expect(provider.chat).toHaveBeenCalledTimes(5);
+
+    // Result should be chunked
+    expect(result).toHaveProperty("chunked", true);
+  });
+
+  it("MAP: non-context-length error on chunk N → throws ReviewError(chunk_failed)", async () => {
+    const provider = createMockProvider({ modelInfo: modelInfo10k });
+    vi.mocked(collectDiff).mockResolvedValue(largeDiff);
+
+    vi.mocked(splitDiffByFile).mockReturnValue({ segments: [segA, segB, segC], warnings: [] });
+    vi.mocked(binPackFiles).mockReturnValue([[segA], [segB], [segC]]);
+
+    const authErr = new ClientError("unauthorized", "Invalid token.", false);
+
+    let callCount = 0;
+    vi.mocked(provider.chat).mockImplementation((req: ChatRequest) => {
+      provider.chatCalls.push(req);
+      callCount++;
+      if (callCount === 2) return Promise.reject(authErr);
+      return Promise.resolve({ content: `finding ${callCount}`, model: "mock-model", usage: { totalTokens: 5 } });
+    });
+
+    const options: ReviewOptions = {
+      diff: { mode: "unstaged" },
+      config: { ...mockConfig, chunking: "always" },
+      model: "mock-model",
+    };
+
+    const err = await review(options, provider).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ReviewError);
+    expect((err as ReviewError).code).toBe("chunk_failed");
+    expect((err as ReviewError).message).toContain("chunk 2/3");
+    expect((err as ReviewError).message).toContain("b.ts");
+    expect((err as ReviewError).cause).toBe(authErr);
   });
 });
