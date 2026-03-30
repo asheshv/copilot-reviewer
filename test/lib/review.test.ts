@@ -8,8 +8,10 @@ import type {
   ModelInfo,
   StreamChunk,
   ResolvedConfig,
+  ChatRequest,
 } from "../../src/lib/types.js";
 import { DiffError, ReviewError } from "../../src/lib/types.js";
+import type { ReviewProvider } from "../../src/lib/providers/types.js";
 
 // Mock all dependencies
 vi.mock("../../src/lib/diff.js", () => ({
@@ -29,6 +31,79 @@ import { collectDiff } from "../../src/lib/diff.js";
 import { assembleUserMessage } from "../../src/lib/prompt.js";
 import { format } from "../../src/lib/formatter.js";
 
+// ============================================================================
+// MockProvider
+// ============================================================================
+
+const MOCK_MODEL_INFO: ModelInfo = {
+  id: "mock-model",
+  name: "Mock Model",
+  endpoints: ["/chat/completions"],
+  streaming: true,
+  toolCalls: false,
+  maxPromptTokens: 128000,
+  maxOutputTokens: 4096,
+  tokenizer: "cl100k_base",
+};
+
+function createMockProvider(overrides: {
+  chatResponse?: ChatResponse;
+  streamChunks?: StreamChunk[];
+  hasAutoSelect?: boolean;
+} = {}): ReviewProvider & { chatCalls: ChatRequest[] } {
+  const chatResponse: ChatResponse = overrides.chatResponse ?? {
+    content: "### HIGH Security issue found",
+    model: "mock-model",
+    usage: { totalTokens: 123 },
+  };
+
+  const streamChunks: StreamChunk[] = overrides.streamChunks ?? [
+    { type: "content", text: "Finding" },
+    { type: "done", usage: { totalTokens: 42 }, model: "mock-model" },
+  ];
+
+  const chatCalls: ChatRequest[] = [];
+
+  const provider: ReviewProvider & { chatCalls: ChatRequest[] } = {
+    name: "mock",
+    chatCalls,
+
+    initialize: vi.fn().mockResolvedValue(undefined),
+
+    chat: vi.fn().mockImplementation((req: ChatRequest) => {
+      chatCalls.push(req);
+      return Promise.resolve(chatResponse);
+    }),
+
+    chatStream: vi.fn().mockImplementation((_req: ChatRequest) => {
+      async function* gen() {
+        for (const chunk of streamChunks) {
+          yield chunk;
+        }
+      }
+      return gen();
+    }),
+
+    listModels: vi.fn().mockResolvedValue([MOCK_MODEL_INFO]),
+
+    validateModel: vi.fn().mockResolvedValue(MOCK_MODEL_INFO),
+
+    dispose: vi.fn(),
+
+    healthCheck: vi.fn().mockResolvedValue({ ok: true, latencyMs: 1 }),
+  };
+
+  if (overrides.hasAutoSelect !== false) {
+    (provider as any).autoSelect = vi.fn().mockResolvedValue("mock-model");
+  }
+
+  return provider;
+}
+
+// ============================================================================
+// review() tests
+// ============================================================================
+
 describe("review()", () => {
   const mockDiffResult: DiffResult = {
     raw: "diff --git a/test.ts b/test.ts\n+added line",
@@ -37,50 +112,22 @@ describe("review()", () => {
   };
 
   const mockConfig: ResolvedConfig = {
-    model: "gpt-4.1",
+    model: "mock-model",
     format: "markdown",
     stream: false,
     prompt: "You are a code reviewer.",
     defaultBase: "main",
     ignorePaths: [],
+    provider: "copilot",
+    providerOptions: {},
+    chunking: "auto",
   };
 
-  const mockModelInfo: ModelInfo = {
-    id: "gpt-4.1",
-    name: "GPT-4.1",
-    endpoints: ["/chat/completions"],
-    streaming: true,
-    toolCalls: false,
-    maxPromptTokens: 8000,
-    maxOutputTokens: 4000,
-    tokenizer: "cl100k_base",
-  };
-
-  const mockChatResponse: ChatResponse = {
-    content: "### HIGH Security issue found",
-    model: "gpt-4.1",
-    usage: { totalTokens: 123 },
-  };
-
-  let mockClient: any;
-  let mockModels: any;
+  let mockProvider: ReviewProvider & { chatCalls: ChatRequest[] };
 
   beforeEach(() => {
     vi.clearAllMocks();
-
-    // Mock client
-    mockClient = {
-      chat: vi.fn().mockResolvedValue(mockChatResponse),
-      chatStream: vi.fn(),
-    };
-
-    // Mock models
-    mockModels = {
-      autoSelect: vi.fn().mockResolvedValue("gpt-4.1"),
-      validateModel: vi.fn().mockResolvedValue(mockModelInfo),
-    };
-
-    // Setup default mocks
+    mockProvider = createMockProvider();
     vi.mocked(collectDiff).mockResolvedValue(mockDiffResult);
   });
 
@@ -88,34 +135,33 @@ describe("review()", () => {
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: mockConfig,
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    const result = await review(options, mockClient, mockModels);
+    const result = await review(options, mockProvider);
 
     // Verify pipeline steps
     expect(collectDiff).toHaveBeenCalledWith(expect.objectContaining({ mode: "unstaged", ignorePaths: mockConfig.ignorePaths }));
-    expect(mockModels.validateModel).toHaveBeenCalledWith("gpt-4.1");
+    expect(mockProvider.validateModel).toHaveBeenCalledWith("mock-model");
     expect(assembleUserMessage).toHaveBeenCalledWith(mockDiffResult);
-    expect(mockClient.chat).toHaveBeenCalledWith(
+    expect(mockProvider.chat).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: "gpt-4.1",
+        model: "mock-model",
         systemPrompt: "You are a code reviewer.",
         messages: expect.any(Array),
         stream: false,
       }),
-      false // useResponsesApi
     );
     expect(format).toHaveBeenCalledWith(
       expect.objectContaining({
-        content: mockChatResponse.content,
-        model: mockChatResponse.model,
-        usage: mockChatResponse.usage,
+        content: "### HIGH Security issue found",
+        model: "mock-model",
+        usage: { totalTokens: 123 },
       }),
       "markdown"
     );
 
-    expect(result.model).toBe("gpt-4.1");
+    expect(result.model).toBe("mock-model");
     expect(result.diff).toEqual(mockDiffResult);
   });
 
@@ -123,10 +169,10 @@ describe("review()", () => {
     const options: ReviewOptions = {
       diff: { mode: "staged" },
       config: mockConfig,
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    const result = await review(options, mockClient, mockModels);
+    const result = await review(options, mockProvider);
 
     expect(result).toHaveProperty("content");
     expect(result).toHaveProperty("model");
@@ -147,7 +193,7 @@ describe("review()", () => {
         config: mockConfig,
       };
 
-      const result = await review(options, mockClient, mockModels);
+      const result = await review(options, mockProvider);
 
       expect(result.content).toBe("No changes found.");
       expect(result.model).toBe("none");
@@ -155,60 +201,82 @@ describe("review()", () => {
       expect(result.warnings).toHaveLength(0);
 
       // API should not be called
-      expect(mockClient.chat).not.toHaveBeenCalled();
-      expect(mockModels.autoSelect).not.toHaveBeenCalled();
-      expect(mockModels.validateModel).not.toHaveBeenCalled();
+      expect(mockProvider.chat).not.toHaveBeenCalled();
+      expect((mockProvider as any).autoSelect).not.toHaveBeenCalled();
+      expect(mockProvider.validateModel).not.toHaveBeenCalled();
     });
   });
 
   describe("model resolution", () => {
-    it("auto mode: calls autoSelect() then validateModel() to get ModelInfo", async () => {
+    it("auto mode: calls provider.autoSelect() then validateModel() to get ModelInfo", async () => {
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
         config: { ...mockConfig, model: "auto" },
         model: "auto",
       };
 
-      await review(options, mockClient, mockModels);
+      await review(options, mockProvider);
 
-      expect(mockModels.autoSelect).toHaveBeenCalled();
-      expect(mockModels.validateModel).toHaveBeenCalledWith("gpt-4.1");
+      expect((mockProvider as any).autoSelect).toHaveBeenCalled();
+      expect(mockProvider.validateModel).toHaveBeenCalledWith("mock-model");
     });
 
-    it("explicit mode: calls validateModel() directly", async () => {
+    it("explicit mode: calls validateModel() directly without autoSelect()", async () => {
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
         config: mockConfig,
-        model: "claude-sonnet",
+        model: "mock-model",
       };
 
-      mockModels.validateModel.mockResolvedValue({
-        ...mockModelInfo,
-        id: "claude-sonnet",
-      });
+      await review(options, mockProvider);
 
-      await review(options, mockClient, mockModels);
-
-      expect(mockModels.autoSelect).not.toHaveBeenCalled();
-      expect(mockModels.validateModel).toHaveBeenCalledWith("claude-sonnet");
+      expect((mockProvider as any).autoSelect).not.toHaveBeenCalled();
+      expect(mockProvider.validateModel).toHaveBeenCalledWith("mock-model");
     });
 
     it("uses config.model when no explicit model provided", async () => {
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
-        config: { ...mockConfig, model: "gpt-4.1" },
+        config: { ...mockConfig, model: "mock-model" },
       };
 
-      await review(options, mockClient, mockModels);
+      await review(options, mockProvider);
 
-      expect(mockModels.validateModel).toHaveBeenCalledWith("gpt-4.1");
+      expect(mockProvider.validateModel).toHaveBeenCalledWith("mock-model");
+    });
+
+    it("provider without autoSelect + model 'auto' throws ConfigError(model_required)", async () => {
+      const providerWithoutAutoSelect = createMockProvider({ hasAutoSelect: false });
+
+      const options: ReviewOptions = {
+        diff: { mode: "unstaged" },
+        config: { ...mockConfig, model: "auto" },
+        model: "auto",
+      };
+
+      await expect(review(options, providerWithoutAutoSelect)).rejects.toThrow(
+        expect.objectContaining({ code: "model_required" })
+      );
+    });
+
+    it("provider with autoSelect + model 'auto' uses auto-selected model", async () => {
+      const options: ReviewOptions = {
+        diff: { mode: "unstaged" },
+        config: { ...mockConfig, model: "auto" },
+        model: "auto",
+      };
+
+      const result = await review(options, mockProvider);
+
+      expect((mockProvider as any).autoSelect).toHaveBeenCalled();
+      expect(result.model).toBe("mock-model");
     });
   });
 
   describe("token budget", () => {
     it("estimate < 80% of maxPromptTokens: no warning", async () => {
       // Small diff: ~50 chars system + 100 chars diff = 150 chars / 4 = 37.5 tokens
-      // 37.5 / 8000 = 0.47% (way under 80%)
+      // 37.5 / 128000 = tiny fraction (way under 80%)
       const smallDiff: DiffResult = {
         raw: "diff --git a/test.ts b/test.ts\n+small change",
         files: [{ path: "test.ts", status: "modified", insertions: 1, deletions: 0 }],
@@ -219,19 +287,23 @@ describe("review()", () => {
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
         config: mockConfig,
-        model: "gpt-4.1",
+        model: "mock-model",
       };
 
-      const result = await review(options, mockClient, mockModels);
+      const result = await review(options, mockProvider);
 
       expect(result.warnings).toHaveLength(0);
     });
 
     it("estimate >= 80% and < 100%: adds warning to result", async () => {
-      // Create a large diff that's 80%+ of maxPromptTokens (8000)
-      // Need: 8000 * 0.85 = 6800 tokens * 4 chars/token = 27200 chars
+      // maxPromptTokens = 128000, need 80%+ = 102400 tokens = ~409600 chars
+      // Use a smaller model limit via custom validateModel response
+      const smallLimitModel: ModelInfo = { ...MOCK_MODEL_INFO, maxPromptTokens: 8000 };
+      vi.mocked(mockProvider.validateModel).mockResolvedValue(smallLimitModel);
+
+      // 8000 * 0.85 = 6800 tokens * 4 chars/token = 27200 chars
       const largeDiff: DiffResult = {
-        raw: "x".repeat(25000), // 25000 chars diff
+        raw: "x".repeat(25000),
         files: [{ path: "test.ts", status: "modified", insertions: 100, deletions: 50 }],
         stats: { filesChanged: 1, insertions: 100, deletions: 50 },
       };
@@ -239,19 +311,21 @@ describe("review()", () => {
 
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
-        config: { ...mockConfig, prompt: "x".repeat(2000) }, // 2000 char prompt
-        model: "gpt-4.1",
+        config: { ...mockConfig, prompt: "x".repeat(2000) },
+        model: "mock-model",
       };
 
-      const result = await review(options, mockClient, mockModels);
+      const result = await review(options, mockProvider);
 
       expect(result.warnings.length).toBeGreaterThan(0);
       expect(result.warnings[0]).toContain("Token budget");
     });
 
     it("estimate >= 100%: throws ReviewError diff_too_large", async () => {
-      // Create a huge diff that exceeds maxPromptTokens
-      // Need: 8000 * 1.05 = 8400 tokens * 4 chars/token = 33600 chars
+      const smallLimitModel: ModelInfo = { ...MOCK_MODEL_INFO, maxPromptTokens: 8000 };
+      vi.mocked(mockProvider.validateModel).mockResolvedValue(smallLimitModel);
+
+      // 8000 * 1.05 = 8400 tokens * 4 chars/token = 33600 chars
       const hugeDiff: DiffResult = {
         raw: "x".repeat(33000),
         files: [{ path: "test.ts", status: "modified", insertions: 1000, deletions: 500 }],
@@ -262,16 +336,16 @@ describe("review()", () => {
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
         config: { ...mockConfig, prompt: "x".repeat(1000) },
-        model: "gpt-4.1",
+        model: "mock-model",
       };
 
-      const err = await review(options, mockClient, mockModels).catch((e: unknown) => e);
+      const err = await review(options, mockProvider).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ReviewError);
       expect((err as ReviewError).code).toBe("diff_too_large");
       expect((err as ReviewError).suggestion).toBe("Use ignorePaths or a larger-context model");
 
       // API should not be called
-      expect(mockClient.chat).not.toHaveBeenCalled();
+      expect(mockProvider.chat).not.toHaveBeenCalled();
     });
   });
 
@@ -280,16 +354,15 @@ describe("review()", () => {
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
         config: { ...mockConfig, prompt: "Custom system prompt." },
-        model: "gpt-4.1",
+        model: "mock-model",
       };
 
-      await review(options, mockClient, mockModels);
+      await review(options, mockProvider);
 
-      expect(mockClient.chat).toHaveBeenCalledWith(
+      expect(mockProvider.chat).toHaveBeenCalledWith(
         expect.objectContaining({
           systemPrompt: "Custom system prompt.",
         }),
-        expect.any(Boolean)
       );
     });
 
@@ -297,13 +370,13 @@ describe("review()", () => {
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
         config: mockConfig,
-        model: "gpt-4.1",
+        model: "mock-model",
       };
 
-      await review(options, mockClient, mockModels);
+      await review(options, mockProvider);
 
       expect(assembleUserMessage).toHaveBeenCalledWith(mockDiffResult);
-      expect(mockClient.chat).toHaveBeenCalledWith(
+      expect(mockProvider.chat).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: [
             {
@@ -312,7 +385,6 @@ describe("review()", () => {
             },
           ],
         }),
-        expect.any(Boolean)
       );
     });
   });
@@ -322,10 +394,10 @@ describe("review()", () => {
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
         config: { ...mockConfig, ignorePaths: ["*.test.ts", "node_modules/**"] },
-        model: "gpt-4.1",
+        model: "mock-model",
       };
 
-      await review(options, mockClient, mockModels);
+      await review(options, mockProvider);
 
       expect(collectDiff).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -335,65 +407,23 @@ describe("review()", () => {
     });
   });
 
-  describe("endpoint routing (useResponsesApi)", () => {
-    it("uses Responses API when model endpoints include /responses", async () => {
-      const responsesModel: ModelInfo = {
-        ...mockModelInfo,
-        endpoints: ["/responses"],
-      };
-      mockModels.validateModel.mockResolvedValue(responsesModel);
-
-      const options: ReviewOptions = {
-        diff: { mode: "unstaged" },
-        config: mockConfig,
-        model: "claude-sonnet",
-      };
-
-      await review(options, mockClient, mockModels);
-
-      expect(mockClient.chat).toHaveBeenCalledWith(
-        expect.any(Object),
-        true // useResponsesApi = true
-      );
-    });
-
-    it("uses Chat Completions API when model endpoints do not include /responses", async () => {
-      const chatModel: ModelInfo = {
-        ...mockModelInfo,
-        endpoints: ["/chat/completions"],
-      };
-      mockModels.validateModel.mockResolvedValue(chatModel);
-
-      const options: ReviewOptions = {
-        diff: { mode: "unstaged" },
-        config: mockConfig,
-        model: "gpt-4.1",
-      };
-
-      await review(options, mockClient, mockModels);
-
-      expect(mockClient.chat).toHaveBeenCalledWith(
-        expect.any(Object),
-        false // useResponsesApi = false
-      );
-    });
-  });
-
   describe("empty response", () => {
     it("returns exit code 0 with 'no findings' warning", async () => {
-      mockClient.chat.mockResolvedValue({
-        content: "",
-        model: "gpt-4.1",
-        usage: { totalTokens: 50 },
+      const providerWithEmptyResponse = createMockProvider({
+        chatResponse: {
+          content: "",
+          model: "mock-model",
+          usage: { totalTokens: 50 },
+        },
       });
 
       const options: ReviewOptions = {
         diff: { mode: "unstaged" },
         config: mockConfig,
-        model: "gpt-4.1",
+        model: "mock-model",
       };
 
-      const result = await review(options, mockClient, mockModels);
+      const result = await review(options, providerWithEmptyResponse);
 
       // Content should be formatted (not raw empty string) — formatter adds structure
       expect(result.content).toBeTruthy();
@@ -401,6 +431,10 @@ describe("review()", () => {
     });
   });
 });
+
+// ============================================================================
+// reviewStream() tests
+// ============================================================================
 
 describe("reviewStream()", () => {
   const mockDiffResult: DiffResult = {
@@ -410,63 +444,33 @@ describe("reviewStream()", () => {
   };
 
   const mockConfig: ResolvedConfig = {
-    model: "gpt-4.1",
+    model: "mock-model",
     format: "markdown",
     stream: true,
     prompt: "You are a code reviewer.",
     defaultBase: "main",
     ignorePaths: [],
+    provider: "copilot",
+    providerOptions: {},
+    chunking: "auto",
   };
 
-  const mockModelInfo: ModelInfo = {
-    id: "gpt-4.1",
-    name: "GPT-4.1",
-    endpoints: ["/chat/completions"],
-    streaming: true,
-    toolCalls: false,
-    maxPromptTokens: 8000,
-    maxOutputTokens: 4000,
-    tokenizer: "cl100k_base",
-  };
-
-  let mockClient: any;
-  let mockModels: any;
+  let mockProvider: ReviewProvider & { chatCalls: ChatRequest[] };
 
   beforeEach(() => {
     vi.clearAllMocks();
-
-    // Mock client
-    mockClient = {
-      chat: vi.fn(),
-      chatStream: vi.fn(),
-    };
-
-    // Mock models
-    mockModels = {
-      autoSelect: vi.fn().mockResolvedValue("gpt-4.1"),
-      validateModel: vi.fn().mockResolvedValue(mockModelInfo),
-    };
-
-    // Setup default mocks
+    mockProvider = createMockProvider();
     vi.mocked(collectDiff).mockResolvedValue(mockDiffResult);
   });
 
   it("returns tuple { stream, warnings, diff, model }", async () => {
-    async function* mockStream() {
-      yield { type: "content", text: "Finding 1" } as StreamChunk;
-      yield { type: "content", text: "Finding 2" } as StreamChunk;
-      yield { type: "done", usage: { totalTokens: 100 }, model: "gpt-4.1" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
-
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: mockConfig,
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    const result = await reviewStream(options, mockClient, mockModels);
+    const result = await reviewStream(options, mockProvider);
 
     expect(result).toHaveProperty("stream");
     expect(result).toHaveProperty("warnings");
@@ -474,11 +478,17 @@ describe("reviewStream()", () => {
     expect(result).toHaveProperty("model");
     expect(Array.isArray(result.warnings)).toBe(true);
     expect(result.diff).toEqual(mockDiffResult);
-    expect(result.model).toBe("gpt-4.1");
+    expect(result.model).toBe("mock-model");
   });
 
   it("warnings computed before stream starts", async () => {
-    // Create a large diff to trigger warning
+    const smallLimitModel: ModelInfo = { ...MOCK_MODEL_INFO, maxPromptTokens: 8000 };
+
+    const providerWithLimit = createMockProvider({
+      streamChunks: [{ type: "content", text: "Finding 1" }],
+    });
+    vi.mocked(providerWithLimit.validateModel).mockResolvedValue(smallLimitModel);
+
     const largeDiff: DiffResult = {
       raw: "x".repeat(25000),
       files: [{ path: "test.ts", status: "modified", insertions: 100, deletions: 50 }],
@@ -486,42 +496,36 @@ describe("reviewStream()", () => {
     };
     vi.mocked(collectDiff).mockResolvedValue(largeDiff);
 
-    async function* mockStream() {
-      yield { type: "content", text: "Finding 1" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
-
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: { ...mockConfig, prompt: "x".repeat(2000) },
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    const result = await reviewStream(options, mockClient, mockModels);
+    const result = await reviewStream(options, providerWithLimit);
 
     // Warnings should be available immediately (before consuming stream)
     expect(result.warnings.length).toBeGreaterThan(0);
     expect(result.warnings[0]).toContain("Token budget");
   });
 
-  it("stream yields string chunks from client.chatStream()", async () => {
-    async function* mockStream() {
-      yield { type: "content", text: "Part 1" } as StreamChunk;
-      yield { type: "content", text: "Part 2" } as StreamChunk;
-      yield { type: "content", text: "Part 3" } as StreamChunk;
-      yield { type: "done", usage: { totalTokens: 123 }, model: "gpt-4.1" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
+  it("stream yields string chunks from provider.chatStream()", async () => {
+    const providerWithChunks = createMockProvider({
+      streamChunks: [
+        { type: "content", text: "Part 1" },
+        { type: "content", text: "Part 2" },
+        { type: "content", text: "Part 3" },
+        { type: "done", usage: { totalTokens: 123 }, model: "mock-model" },
+      ],
+    });
 
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: mockConfig,
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    const result = await reviewStream(options, mockClient, mockModels);
+    const result = await reviewStream(options, providerWithChunks);
 
     const chunks: string[] = [];
     for await (const chunk of result.stream) {
@@ -533,42 +537,31 @@ describe("reviewStream()", () => {
   });
 
   it("model is resolved model ID", async () => {
-    async function* mockStream() {
-      yield { type: "content", text: "Finding" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
+    const customModel: ModelInfo = { ...MOCK_MODEL_INFO, id: "custom-model" };
+    const providerWithCustomModel = createMockProvider({
+      streamChunks: [{ type: "content", text: "Finding" }],
+    });
+    vi.mocked(providerWithCustomModel.validateModel).mockResolvedValue(customModel);
 
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: mockConfig,
-      model: "claude-sonnet",
+      model: "custom-model",
     };
 
-    mockModels.validateModel.mockResolvedValue({
-      ...mockModelInfo,
-      id: "claude-sonnet",
-    });
+    const result = await reviewStream(options, providerWithCustomModel);
 
-    const result = await reviewStream(options, mockClient, mockModels);
-
-    expect(result.model).toBe("claude-sonnet");
+    expect(result.model).toBe("custom-model");
   });
 
   it("diff is DiffResult metadata", async () => {
-    async function* mockStream() {
-      yield { type: "content", text: "Finding" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
-
     const options: ReviewOptions = {
       diff: { mode: "staged" },
       config: mockConfig,
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    const result = await reviewStream(options, mockClient, mockModels);
+    const result = await reviewStream(options, mockProvider);
 
     expect(result.diff).toEqual(mockDiffResult);
     expect(result.diff.stats.filesChanged).toBe(1);
@@ -584,23 +577,17 @@ describe("reviewStream()", () => {
       config: mockConfig,
     };
 
-    await expect(reviewStream(options, mockClient, mockModels)).rejects.toThrow(DiffError);
+    await expect(reviewStream(options, mockProvider)).rejects.toThrow(DiffError);
   });
 
   it("passes ignorePaths to collectDiff", async () => {
-    async function* mockStream() {
-      yield { type: "content", text: "Finding" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
-
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: { ...mockConfig, ignorePaths: ["*.log", "dist/**"] },
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    await reviewStream(options, mockClient, mockModels);
+    await reviewStream(options, mockProvider);
 
     expect(collectDiff).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -610,20 +597,20 @@ describe("reviewStream()", () => {
   });
 
   it("captures usage from done chunk after stream is consumed", async () => {
-    async function* mockStream() {
-      yield { type: "content", text: "Finding" } as StreamChunk;
-      yield { type: "done", usage: { totalTokens: 42 }, model: "gpt-4.1" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
+    const providerWithUsage = createMockProvider({
+      streamChunks: [
+        { type: "content", text: "Finding" },
+        { type: "done", usage: { totalTokens: 42 }, model: "mock-model" },
+      ],
+    });
 
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: mockConfig,
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    const result = await reviewStream(options, mockClient, mockModels);
+    const result = await reviewStream(options, providerWithUsage);
     expect(result.usage).toBeUndefined(); // not yet consumed
 
     for await (const _ of result.stream) { /* drain */ }
@@ -632,49 +619,36 @@ describe("reviewStream()", () => {
   });
 
   it("usage remains undefined when done chunk has no usage", async () => {
-    async function* mockStream() {
-      yield { type: "content", text: "Finding" } as StreamChunk;
-      yield { type: "done" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
+    const providerWithNoUsage = createMockProvider({
+      streamChunks: [
+        { type: "content", text: "Finding" },
+        { type: "done" },
+      ],
+    });
 
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
       config: mockConfig,
-      model: "gpt-4.1",
+      model: "mock-model",
     };
 
-    const result = await reviewStream(options, mockClient, mockModels);
+    const result = await reviewStream(options, providerWithNoUsage);
     for await (const _ of result.stream) { /* drain */ }
 
     expect(result.usage).toBeUndefined();
   });
 
-  it("uses Responses API when model supports it", async () => {
-    const responsesModel: ModelInfo = {
-      ...mockModelInfo,
-      endpoints: ["/responses"],
-    };
-    mockModels.validateModel.mockResolvedValue(responsesModel);
-
-    async function* mockStream() {
-      yield { type: "content", text: "Finding" } as StreamChunk;
-    }
-
-    mockClient.chatStream.mockReturnValue(mockStream());
+  it("provider without autoSelect + model 'auto' throws ConfigError(model_required)", async () => {
+    const providerWithoutAutoSelect = createMockProvider({ hasAutoSelect: false });
 
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
-      config: mockConfig,
-      model: "claude-sonnet",
+      config: { ...mockConfig, model: "auto" },
+      model: "auto",
     };
 
-    await reviewStream(options, mockClient, mockModels);
-
-    expect(mockClient.chatStream).toHaveBeenCalledWith(
-      expect.any(Object),
-      true // useResponsesApi = true
+    await expect(reviewStream(options, providerWithoutAutoSelect)).rejects.toThrow(
+      expect.objectContaining({ code: "model_required" })
     );
   });
 });

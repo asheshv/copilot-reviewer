@@ -4,6 +4,7 @@ import { collectDiff } from "./diff.js";
 import { assembleUserMessage } from "./prompt.js";
 import { format } from "./formatter.js";
 import {
+  ConfigError,
   DiffError,
   ReviewError,
   type ChatRequest,
@@ -13,8 +14,7 @@ import {
   type ReviewResult,
   type ReviewStreamResult,
 } from "./types.js";
-import type { CopilotClient } from "./client.js";
-import type { ModelManager } from "./models.js";
+import type { ReviewProvider } from "./providers/types.js";
 
 /**
  * Buffered review pipeline.
@@ -22,8 +22,7 @@ import type { ModelManager } from "./models.js";
  */
 export async function review(
   options: ReviewOptions,
-  client: CopilotClient,
-  models: ModelManager,
+  provider: ReviewProvider,
 ): Promise<ReviewResult> {
   // Step 1: Collect diff
   let diff: DiffResult;
@@ -43,7 +42,7 @@ export async function review(
   }
 
   // Step 2: Resolve model
-  const modelInfo = await resolveModel(options, models);
+  const modelInfo = await resolveModel(options, provider);
 
   // Step 3: Check token budget
   const warnings: string[] = [];
@@ -59,8 +58,7 @@ export async function review(
   };
 
   // Step 5: Call API
-  const useResponsesApi = modelInfo.endpoints.includes("/responses");
-  const chatResponse = await client.chat(request, useResponsesApi);
+  const chatResponse = await provider.chat(request);
 
   // Step 6: Handle empty response
   if (!chatResponse.content) {
@@ -94,14 +92,13 @@ export async function review(
  */
 export async function reviewStream(
   options: ReviewOptions,
-  client: CopilotClient,
-  models: ModelManager,
+  provider: ReviewProvider,
 ): Promise<ReviewStreamResult> {
   // Step 1: Collect diff (throws on empty — no early return for streaming)
   const diff = await collectDiffWithIgnorePaths(options);
 
   // Step 2: Resolve model
-  const modelInfo = await resolveModel(options, models);
+  const modelInfo = await resolveModel(options, provider);
 
   // Step 3: Check token budget
   const warnings: string[] = [];
@@ -117,8 +114,7 @@ export async function reviewStream(
   };
 
   // Step 5: Call streaming API
-  const useResponsesApi = modelInfo.endpoints.includes("/responses");
-  const rawStream = client.chatStream(request, useResponsesApi);
+  const rawStream = provider.chatStream(request);
 
   const result: ReviewStreamResult = {
     stream: undefined as unknown as AsyncIterable<string>, // set below
@@ -160,19 +156,27 @@ async function collectDiffWithIgnorePaths(options: ReviewOptions): Promise<DiffR
 
 /**
  * Resolve model: auto-select or explicit validation.
+ * If provider has no autoSelect and model is "auto", throws ConfigError.
  */
 async function resolveModel(
   options: ReviewOptions,
-  models: ModelManager,
+  provider: ReviewProvider,
 ): Promise<ModelInfo> {
   const modelId = options.model ?? options.config.model;
 
   if (!modelId || modelId === "auto") {
-    const selectedId = await models.autoSelect();
-    return models.validateModel(selectedId);
+    if (!provider.autoSelect) {
+      throw new ConfigError(
+        "model_required",
+        `Provider '${provider.name}' requires an explicit model. Use --model or set model in config.`,
+        "",
+      );
+    }
+    const selectedId = await provider.autoSelect();
+    return provider.validateModel(selectedId);
   }
 
-  return models.validateModel(modelId);
+  return provider.validateModel(modelId);
 }
 
 /**
