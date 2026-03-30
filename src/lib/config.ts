@@ -10,14 +10,131 @@ import type { ConfigFile, ResolvedConfig, CLIOverrides } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
+/** Known providerOptions keys for typo suggestions */
+const KNOWN_PROVIDER_OPTION_KEYS = ["copilot", "ollama"];
+
+/** Levenshtein distance between two strings */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/** Validate a URL string; throw ConfigError if malformed */
+function validateUrl(urlStr: string, context: string): void {
+  try {
+    new URL(urlStr);
+  } catch {
+    throw new ConfigError("invalid_url", `Invalid URL in ${context}: ${urlStr}`, context, false);
+  }
+}
+
+/**
+ * Resolve global config directory: prefer ~/.code-reviewer, fallback to ~/.copilot-review.
+ * Emits a one-time warning if both exist.
+ */
+async function resolveGlobalConfigDir(): Promise<string> {
+  const home = homedir();
+  const newDir = join(home, ".code-reviewer");
+  const oldDir = join(home, ".copilot-review");
+
+  const newJsonPath = join(newDir, "config.json");
+  const oldJsonPath = join(oldDir, "config.json");
+
+  let newExists = false;
+  let oldExists = false;
+
+  try {
+    await access(newJsonPath);
+    newExists = true;
+  } catch {
+    // doesn't exist
+  }
+
+  try {
+    await access(oldJsonPath);
+    oldExists = true;
+  } catch {
+    // doesn't exist
+  }
+
+  if (newExists && oldExists) {
+    process.stderr.write(
+      "Warning: both ~/.code-reviewer/ and ~/.copilot-review/ exist. Using ~/.code-reviewer/. Run 'copilot-review status' for details.\n"
+    );
+    return newDir;
+  }
+
+  if (newExists) {
+    return newDir;
+  }
+
+  // fallback to old path (may also not exist — loadConfigLayer handles that gracefully)
+  return oldDir;
+}
+
+/**
+ * Resolve project config directory: prefer <git-root>/.code-reviewer, fallback to .copilot-review.
+ * Emits a one-time warning if both exist.
+ */
+async function resolveProjectConfigDir(gitRoot: string): Promise<string> {
+  const newDir = join(gitRoot, ".code-reviewer");
+  const oldDir = join(gitRoot, ".copilot-review");
+
+  const newJsonPath = join(newDir, "config.json");
+  const oldJsonPath = join(oldDir, "config.json");
+
+  let newExists = false;
+  let oldExists = false;
+
+  try {
+    await access(newJsonPath);
+    newExists = true;
+  } catch {
+    // doesn't exist
+  }
+
+  try {
+    await access(oldJsonPath);
+    oldExists = true;
+  } catch {
+    // doesn't exist
+  }
+
+  if (newExists && oldExists) {
+    process.stderr.write(
+      `Warning: both ${gitRoot}/.code-reviewer/ and ${gitRoot}/.copilot-review/ exist. Using ${gitRoot}/.code-reviewer/. Run 'copilot-review status' for details.\n`
+    );
+    return newDir;
+  }
+
+  if (newExists) {
+    return newDir;
+  }
+
+  return oldDir;
+}
+
 /**
  * Load and merge configuration from all 4 layers.
  *
  * Layer precedence (lowest to highest):
  * 1. Built-in defaults
- * 2. Global config (~/.copilot-review/)
- * 3. Project config (<git-root>/.copilot-review/ or --config path)
- * 4. CLI overrides
+ * 2. Environment variables (CODEREVIEWER_*)
+ * 3. Global config (~/.code-reviewer/ or ~/.copilot-review/)
+ * 4. Project config (<git-root>/.code-reviewer/ or .copilot-review/ or --config path)
+ * 5. CLI overrides
  */
 export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedConfig> {
   // Layer 1: Built-in defaults
@@ -35,15 +152,43 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
 
   let currentMode: "extend" | "replace" = "extend";
 
-  // Layer 2: Global config
-  const globalDir = join(homedir(), ".copilot-review");
+  // Layer 2: Environment variables
+  const envProvider = process.env["CODEREVIEWER_PROVIDER"];
+  if (envProvider !== undefined) {
+    config.provider = envProvider;
+  }
+
+  const envOllamaUrl = process.env["CODEREVIEWER_OLLAMA_URL"];
+  if (envOllamaUrl !== undefined) {
+    validateUrl(envOllamaUrl, "CODEREVIEWER_OLLAMA_URL");
+    config.providerOptions = {
+      ...config.providerOptions,
+      ollama: { baseUrl: envOllamaUrl },
+    };
+  }
+
+  const envChunking = process.env["CODEREVIEWER_CHUNKING"];
+  if (envChunking !== undefined) {
+    if (envChunking !== "auto" && envChunking !== "always" && envChunking !== "never") {
+      throw new ConfigError(
+        "invalid_chunking",
+        `Invalid CODEREVIEWER_CHUNKING value: "${envChunking}". Must be "auto", "always", or "never".`,
+        "CODEREVIEWER_CHUNKING",
+        false
+      );
+    }
+    config.chunking = envChunking;
+  }
+
+  // Layer 3: Global config
+  const globalDir = await resolveGlobalConfigDir();
   const globalLayer = await loadConfigLayer(globalDir);
   config = mergeConfig(config, globalLayer, currentMode, "global");
   if (globalLayer.mode) {
     currentMode = globalLayer.mode;
   }
 
-  // Layer 3: Project config (or --config override)
+  // Layer 4: Project config (or --config override)
   let projectDir: string | null = null;
 
   if (cliOverrides?.config) {
@@ -51,9 +196,9 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     projectDir = cliOverrides.config;
   } else {
     // Auto-detect git root
-    projectDir = await detectGitRoot();
-    if (projectDir) {
-      projectDir = join(projectDir, ".copilot-review");
+    const gitRoot = await detectGitRoot();
+    if (gitRoot) {
+      projectDir = await resolveProjectConfigDir(gitRoot);
     }
   }
 
@@ -65,7 +210,7 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     }
   }
 
-  // Layer 4: CLI overrides
+  // Layer 5: CLI overrides
   if (cliOverrides) {
     if (cliOverrides.model !== undefined) {
       config.model = cliOverrides.model;
@@ -79,6 +224,18 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     if (cliOverrides.prompt !== undefined) {
       // CLI --prompt is always implicit replace
       config.prompt = cliOverrides.prompt;
+    }
+    if (cliOverrides.provider !== undefined) {
+      config.provider = cliOverrides.provider;
+    }
+    if (cliOverrides.chunking !== undefined) {
+      config.chunking = cliOverrides.chunking;
+    }
+    if (cliOverrides.ollamaUrl !== undefined) {
+      config.providerOptions = {
+        ...config.providerOptions,
+        ollama: { baseUrl: cliOverrides.ollamaUrl },
+      };
     }
   }
 
@@ -138,6 +295,23 @@ async function loadConfigLayer(
     if (jsonConfig.defaultBase !== undefined) result.defaultBase = jsonConfig.defaultBase;
     if (jsonConfig.ignorePaths !== undefined) result.ignorePaths = jsonConfig.ignorePaths;
     if (jsonConfig.mode !== undefined) result.mode = jsonConfig.mode;
+    if (jsonConfig.provider !== undefined) result.provider = jsonConfig.provider;
+    if (jsonConfig.chunking !== undefined) result.chunking = jsonConfig.chunking;
+    if (jsonConfig.providerOptions !== undefined) {
+      // Validate known keys and warn on unknown
+      for (const key of Object.keys(jsonConfig.providerOptions)) {
+        if (!KNOWN_PROVIDER_OPTION_KEYS.includes(key)) {
+          const suggestion = KNOWN_PROVIDER_OPTION_KEYS.find((k) => levenshtein(key, k) <= 2);
+          const hint = suggestion ? ` Did you mean '${suggestion}'?` : "";
+          process.stderr.write(`Warning: unknown providerOptions key '${key}'.${hint}\n`);
+        }
+      }
+      // Validate ollama.baseUrl if present
+      if (jsonConfig.providerOptions.ollama?.baseUrl !== undefined) {
+        validateUrl(jsonConfig.providerOptions.ollama.baseUrl, jsonPath);
+      }
+      result.providerOptions = jsonConfig.providerOptions as ResolvedConfig["providerOptions"];
+    }
 
     // Handle prompt field (inline text or file path)
     if (jsonConfig.prompt !== undefined) {
@@ -238,6 +412,13 @@ function mergeConfig(
   if (layer.format !== undefined) result.format = layer.format;
   if (layer.stream !== undefined) result.stream = layer.stream;
   if (layer.defaultBase !== undefined) result.defaultBase = layer.defaultBase;
+  if (layer.provider !== undefined) result.provider = layer.provider;
+  if (layer.chunking !== undefined) result.chunking = layer.chunking;
+
+  // providerOptions: shallow merge per provider key
+  if (layer.providerOptions !== undefined) {
+    result.providerOptions = { ...result.providerOptions, ...layer.providerOptions } as ResolvedConfig["providerOptions"];
+  }
 
   // ignorePaths: union and deduplicate
   if (layer.ignorePaths !== undefined && layer.ignorePaths.length > 0) {

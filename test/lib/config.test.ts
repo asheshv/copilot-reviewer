@@ -187,7 +187,14 @@ describe("loadConfig", () => {
       const globalJson = '{ "model": "gpt-4.1", "ignorePaths": ["*.lock"] }';
       const projectJson = await loadRealFixture("project/config.json");
 
-      mockAccess.mockResolvedValue(undefined);
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        // Only the old .copilot-review paths exist (no .code-reviewer)
+        if (pathStr.includes(".copilot-review/config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
 
       mockReadFile.mockImplementation(async (path: any) => {
         if (path.includes("/home/user/.copilot-review/config.json")) {
@@ -285,7 +292,13 @@ describe("loadConfig", () => {
       const projectExtendJson = await loadRealFixture("project-extend/config.json");
       const projectMd = "Project rules";
 
-      mockAccess.mockResolvedValue(undefined);
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json") || pathStr.includes(".copilot-review/config.md")) {
+          return;
+        }
+        throw createENOENT();
+      });
 
       mockReadFile.mockImplementation(async (path: any) => {
         if (path.includes("/home/user/.copilot-review/config.json")) {
@@ -315,7 +328,13 @@ describe("loadConfig", () => {
       const projectJson = await loadRealFixture("project/config.json");
       const projectMd = await loadRealFixture("project/config.md");
 
-      mockAccess.mockResolvedValue(undefined);
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json") || pathStr.includes(".copilot-review/config.md")) {
+          return;
+        }
+        throw createENOENT();
+      });
 
       mockReadFile.mockImplementation(async (path: any) => {
         if (path.includes("/home/user/.copilot-review/config.json")) {
@@ -345,7 +364,8 @@ describe("loadConfig", () => {
       const projectJson = '{ "ignorePaths": ["vendor/**", "*.lock"] }';
 
       mockAccess.mockImplementation(async (path: any) => {
-        if (path.includes("config.json")) {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json")) {
           return;
         }
         throw createENOENT();
@@ -523,7 +543,13 @@ describe("loadConfig", () => {
       const globalJson = '{ "model": "gpt-4.1" }';
       const customJson = '{ "defaultBase": "staging" }';
 
-      mockAccess.mockResolvedValue(undefined);
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json") || pathStr.includes("/custom/config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
 
       mockReadFile.mockImplementation(async (path: any) => {
         if (path.includes("/home/user/.copilot-review/config.json")) {
@@ -546,7 +572,13 @@ describe("loadConfig", () => {
       const globalJson = '{ "ignorePaths": ["*.lock"] }';
       const customJson = '{ "ignorePaths": ["vendor/**"] }';
 
-      mockAccess.mockResolvedValue(undefined);
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json") || pathStr.includes("/custom/config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
 
       mockReadFile.mockImplementation(async (path: any) => {
         if (path.includes("/home/user/.copilot-review/config.json")) {
@@ -561,6 +593,343 @@ describe("loadConfig", () => {
       const config = await loadConfig({ config: "/custom/config.json" });
 
       expect(config.ignorePaths).toEqual(["*.lock", "vendor/**"]);
+    });
+  });
+
+  describe("provider/chunking/providerOptions defaults", () => {
+    it("returns provider=copilot, chunking=auto, providerOptions={} by default", async () => {
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig();
+
+      expect(config.provider).toBe("copilot");
+      expect(config.chunking).toBe("auto");
+      expect(config.providerOptions).toEqual({});
+    });
+  });
+
+  describe("environment variable layer", () => {
+    it("CODEREVIEWER_PROVIDER sets config.provider", async () => {
+      vi.stubEnv("CODEREVIEWER_PROVIDER", "ollama");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig();
+
+      expect(config.provider).toBe("ollama");
+      vi.unstubAllEnvs();
+    });
+
+    it("CODEREVIEWER_OLLAMA_URL sets config.providerOptions.ollama.baseUrl", async () => {
+      vi.stubEnv("CODEREVIEWER_OLLAMA_URL", "http://remote:11434");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig();
+
+      expect(config.providerOptions.ollama?.baseUrl).toBe("http://remote:11434");
+      vi.unstubAllEnvs();
+    });
+
+    it("CODEREVIEWER_OLLAMA_URL throws ConfigError for malformed URL", async () => {
+      vi.stubEnv("CODEREVIEWER_OLLAMA_URL", "not-a-url");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      await expect(loadConfig()).rejects.toThrow(ConfigError);
+      await expect(loadConfig()).rejects.toMatchObject({
+        code: "invalid_url",
+        name: "ConfigError",
+      });
+      vi.unstubAllEnvs();
+    });
+
+    it("CODEREVIEWER_CHUNKING=never sets config.chunking", async () => {
+      vi.stubEnv("CODEREVIEWER_CHUNKING", "never");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig();
+
+      expect(config.chunking).toBe("never");
+      vi.unstubAllEnvs();
+    });
+
+    it("CODEREVIEWER_CHUNKING=invalid throws ConfigError", async () => {
+      vi.stubEnv("CODEREVIEWER_CHUNKING", "invalid");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      await expect(loadConfig()).rejects.toThrow(ConfigError);
+      await expect(loadConfig()).rejects.toMatchObject({
+        code: "invalid_chunking",
+        name: "ConfigError",
+      });
+      vi.unstubAllEnvs();
+    });
+  });
+
+  describe("config file path resolution", () => {
+    it("prefers ~/.code-reviewer/config.json over ~/.copilot-review/", async () => {
+      mockGitRoot(null);
+      const newPathJson = '{ "model": "new-path-model" }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".code-reviewer/config.json")) {
+          return; // new path exists
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".code-reviewer/config.json")) {
+          return newPathJson;
+        }
+        throw createENOENT();
+      });
+
+      const config = await loadConfig();
+
+      expect(config.model).toBe("new-path-model");
+    });
+
+    it("falls back silently to ~/.copilot-review/ when ~/.code-reviewer/ missing", async () => {
+      mockGitRoot(null);
+      const oldPathJson = '{ "model": "old-path-model" }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json")) {
+          return; // old path exists
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".copilot-review/config.json")) {
+          return oldPathJson;
+        }
+        throw createENOENT();
+      });
+
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const config = await loadConfig();
+
+      expect(config.model).toBe("old-path-model");
+      // No warning when only old path exists
+      expect(stderrSpy).not.toHaveBeenCalledWith(expect.stringContaining("Warning: both"));
+      stderrSpy.mockRestore();
+    });
+
+    it("emits warning to stderr when both ~/.code-reviewer/ and ~/.copilot-review/ exist", async () => {
+      mockGitRoot(null);
+      const newPathJson = '{ "model": "new-path-model" }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        // Both exist — new path returns first
+        if (pathStr.includes(".code-reviewer/config.json")) {
+          return;
+        }
+        if (pathStr.includes(".copilot-review/config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".code-reviewer/config.json")) {
+          return newPathJson;
+        }
+        throw createENOENT();
+      });
+
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      const config = await loadConfig();
+
+      expect(config.model).toBe("new-path-model");
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Warning: both ~/.code-reviewer/")
+      );
+      stderrSpy.mockRestore();
+    });
+  });
+
+  describe("providerOptions in config file", () => {
+    it("reads provider and chunking from config file", async () => {
+      mockGitRoot(null);
+      const globalJson = '{ "provider": "ollama", "chunking": "always", "providerOptions": { "ollama": { "baseUrl": "http://localhost:11434" } } }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes(".code-reviewer/config.json") || pathStr.includes(".copilot-review/config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("config.json")) {
+          return globalJson;
+        }
+        throw createENOENT();
+      });
+
+      const config = await loadConfig();
+
+      expect(config.provider).toBe("ollama");
+      expect(config.chunking).toBe("always");
+      expect(config.providerOptions.ollama?.baseUrl).toBe("http://localhost:11434");
+    });
+
+    it("project providerOptions.ollama replaces global ollama object (shallow merge)", async () => {
+      mockGitRoot("/project");
+      const globalJson = '{ "providerOptions": { "ollama": { "baseUrl": "http://global:11434" } } }';
+      const projectJson = '{ "providerOptions": { "ollama": { "baseUrl": "http://project:11434" } } }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("/home/user") && pathStr.includes("config.json")) {
+          return globalJson;
+        }
+        if (pathStr.includes("/project") && pathStr.includes("config.json")) {
+          return projectJson;
+        }
+        throw createENOENT();
+      });
+
+      const config = await loadConfig();
+
+      // Project config replaces the entire ollama object, not deep-merges
+      expect(config.providerOptions.ollama?.baseUrl).toBe("http://project:11434");
+    });
+
+    it("throws ConfigError for invalid ollama.baseUrl in config file", async () => {
+      mockGitRoot(null);
+      const globalJson = '{ "providerOptions": { "ollama": { "baseUrl": "not-a-url" } } }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("config.json")) {
+          return globalJson;
+        }
+        throw createENOENT();
+      });
+
+      await expect(loadConfig()).rejects.toThrow(ConfigError);
+      await expect(loadConfig()).rejects.toMatchObject({
+        code: "invalid_url",
+        name: "ConfigError",
+      });
+    });
+
+    it("emits warning for unknown providerOptions key", async () => {
+      mockGitRoot(null);
+      // "openai" is close to nothing in known list, but "copilott" should suggest "copilot"
+      const globalJson = '{ "providerOptions": { "copilott": {} } }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("config.json")) {
+          return globalJson;
+        }
+        throw createENOENT();
+      });
+
+      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+      await loadConfig();
+
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Warning: unknown providerOptions key 'copilott'")
+      );
+      stderrSpy.mockRestore();
+    });
+  });
+
+  describe("CLI overrides for provider/chunking/ollamaUrl", () => {
+    it("CLI provider override has highest precedence", async () => {
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig({ provider: "ollama" });
+
+      expect(config.provider).toBe("ollama");
+    });
+
+    it("CLI chunking override has highest precedence", async () => {
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig({ chunking: "never" });
+
+      expect(config.chunking).toBe("never");
+    });
+
+    it("CLI ollamaUrl sets providerOptions.ollama.baseUrl", async () => {
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig({ ollamaUrl: "http://cli:11434" });
+
+      expect(config.providerOptions.ollama?.baseUrl).toBe("http://cli:11434");
+    });
+
+    it("CLI ollamaUrl merges with existing providerOptions", async () => {
+      mockGitRoot(null);
+      const globalJson = '{ "providerOptions": { "ollama": { "baseUrl": "http://global:11434" } } }';
+
+      mockAccess.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("config.json")) {
+          return;
+        }
+        throw createENOENT();
+      });
+
+      mockReadFile.mockImplementation(async (path: any) => {
+        const pathStr = String(path);
+        if (pathStr.includes("config.json")) {
+          return globalJson;
+        }
+        throw createENOENT();
+      });
+
+      const config = await loadConfig({ ollamaUrl: "http://cli:11434" });
+
+      expect(config.providerOptions.ollama?.baseUrl).toBe("http://cli:11434");
     });
   });
 });
