@@ -133,7 +133,18 @@ export async function handleReview(
     if (opts.prompt) cliOverrides.prompt = opts.prompt;
     if (opts.config) cliOverrides.config = opts.config;
     if (opts.provider) cliOverrides.provider = opts.provider;
-    if (opts.chunking) cliOverrides.chunking = opts.chunking as "auto" | "always" | "never";
+    if (opts.chunking) {
+      const validChunking = ["auto", "always", "never"] as const;
+      if (!validChunking.includes(opts.chunking as "auto" | "always" | "never")) {
+        throw new ConfigError(
+          "invalid_config",
+          `Invalid --chunking value: '${opts.chunking}'. Must be one of: ${validChunking.join(", ")}.`,
+          "--chunking",
+          false
+        );
+      }
+      cliOverrides.chunking = opts.chunking as "auto" | "always" | "never";
+    }
     if (opts.ollamaUrl) cliOverrides.ollamaUrl = opts.ollamaUrl;
 
     progress("Loading configuration... ");
@@ -150,68 +161,73 @@ export async function handleReview(
     const provider = await createProvider(config);
     process.on("exit", () => provider.dispose());
 
-    const reviewOpts: ReviewOptions = {
-      diff: diffOpts,
-      config,
-    };
+    try {
+      const reviewOpts: ReviewOptions = {
+        diff: diffOpts,
+        config,
+      };
 
-    // Determine streaming behavior
-    const shouldStream = config.stream;
+      // Determine streaming behavior
+      const shouldStream = config.stream;
 
-    if (shouldStream) {
-      progress("Requesting review (streaming)... \n");
-      const result = await reviewStream(reviewOpts, provider);
+      if (shouldStream) {
+        progress("Requesting review (streaming)... \n");
+        const result = await reviewStream(reviewOpts, provider);
 
-      if (result.warnings.length > 0) {
-        for (const w of result.warnings) {
-          process.stderr.write(`Warning: ${w}\n`);
+        if (result.warnings.length > 0) {
+          for (const w of result.warnings) {
+            process.stderr.write(`Warning: ${w}\n`);
+          }
         }
-      }
 
-      // Stream to stdout
-      let fullContent = "";
-      if (config.format === "json") {
-        // NDJSON mode
-        for await (const chunk of result.stream) {
-          const ndjson = formatNdjsonChunk({ type: "content", text: chunk });
-          process.stdout.write(ndjson);
-          fullContent += chunk;
+        // Stream to stdout
+        let fullContent = "";
+        if (config.format === "json") {
+          // NDJSON mode
+          for await (const chunk of result.stream) {
+            const ndjson = formatNdjsonChunk({ type: "content", text: chunk });
+            process.stdout.write(ndjson);
+            fullContent += chunk;
+          }
+          // Final done chunk
+          process.stdout.write(formatNdjsonChunk({ type: "done" }));
+        } else {
+          // text/markdown: stream raw text
+          for await (const chunk of result.stream) {
+            process.stdout.write(chunk);
+            fullContent += chunk;
+          }
+          process.stdout.write("\n");
         }
-        // Final done chunk
-        process.stdout.write(formatNdjsonChunk({ type: "done" }));
+
+        // result.usage is populated after the stream is fully consumed (above)
+        debug(verbose, `Streaming complete, model=${result.model}`);
+        if (result.usage) {
+          process.stderr.write(`\nToken usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);
+        }
+        return detectHighSeverity(fullContent) ? EXIT_CODES.HIGH_SEVERITY : EXIT_CODES.SUCCESS;
       } else {
-        // text/markdown: stream raw text
-        for await (const chunk of result.stream) {
-          process.stdout.write(chunk);
-          fullContent += chunk;
+        progress("Requesting review... ");
+        const result = await review(reviewOpts, provider);
+        progress("done\n");
+
+        if (result.warnings.length > 0) {
+          for (const w of result.warnings) {
+            process.stderr.write(`Warning: ${w}\n`);
+          }
         }
-        process.stdout.write("\n");
-      }
 
-      // result.usage is populated after the stream is fully consumed (above)
-      debug(verbose, `Streaming complete, model=${result.model}`);
-      if (result.usage) {
-        process.stderr.write(`\nToken usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);
-      }
-      return detectHighSeverity(fullContent) ? EXIT_CODES.HIGH_SEVERITY : EXIT_CODES.SUCCESS;
-    } else {
-      progress("Requesting review... ");
-      const result = await review(reviewOpts, provider);
-      progress("done\n");
-
-      if (result.warnings.length > 0) {
-        for (const w of result.warnings) {
-          process.stderr.write(`Warning: ${w}\n`);
+        debug(verbose, `Review complete, model=${result.model}, tokens=${result.usage?.totalTokens ?? "unknown"}`);
+        if (result.usage) {
+          process.stderr.write(`Token usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);
         }
-      }
+        process.stdout.write(result.content + "\n");
 
-      debug(verbose, `Review complete, model=${result.model}, tokens=${result.usage?.totalTokens ?? "unknown"}`);
-      if (result.usage) {
-        process.stderr.write(`Token usage: ${result.usage.totalTokens.toLocaleString("en-US")} tokens | Model: ${result.model}\n`);
+        return detectHighSeverity(result.content) ? EXIT_CODES.HIGH_SEVERITY : EXIT_CODES.SUCCESS;
       }
-      process.stdout.write(result.content + "\n");
-
-      return detectHighSeverity(result.content) ? EXIT_CODES.HIGH_SEVERITY : EXIT_CODES.SUCCESS;
+    } catch (err) {
+      provider.dispose();
+      throw err;
     }
   } catch (err) {
     const code = mapErrorToExitCode(err);
@@ -235,20 +251,26 @@ export async function handleModels(opts: Pick<CLIOpts, "provider" | "ollamaUrl">
     const config = await loadConfig(cliOverrides);
     const provider = await createProvider(config);
     process.on("exit", () => provider.dispose());
-    const list = await provider.listModels();
-    progress("done\n");
 
-    // Print table header
-    const header = `${"ID".padEnd(30)} ${"Name".padEnd(25)} ${"Streaming".padEnd(10)} ${"Tools".padEnd(6)} ${"Max Tokens".padEnd(12)}`;
-    process.stdout.write(header + "\n");
-    process.stdout.write("-".repeat(header.length) + "\n");
+    try {
+      const list = await provider.listModels();
+      progress("done\n");
 
-    for (const m of list) {
-      const row = `${m.id.padEnd(30)} ${m.name.padEnd(25)} ${String(m.streaming).padEnd(10)} ${String(m.toolCalls).padEnd(6)} ${String(m.maxPromptTokens).padEnd(12)}`;
-      process.stdout.write(row + "\n");
+      // Print table header
+      const header = `${"ID".padEnd(30)} ${"Name".padEnd(25)} ${"Streaming".padEnd(10)} ${"Tools".padEnd(6)} ${"Max Tokens".padEnd(12)}`;
+      process.stdout.write(header + "\n");
+      process.stdout.write("-".repeat(header.length) + "\n");
+
+      for (const m of list) {
+        const row = `${m.id.padEnd(30)} ${m.name.padEnd(25)} ${String(m.streaming).padEnd(10)} ${String(m.toolCalls).padEnd(6)} ${String(m.maxPromptTokens).padEnd(12)}`;
+        process.stdout.write(row + "\n");
+      }
+
+      return EXIT_CODES.SUCCESS;
+    } catch (err) {
+      provider.dispose();
+      throw err;
     }
-
-    return EXIT_CODES.SUCCESS;
   } catch (err) {
     const code = mapErrorToExitCode(err);
     const message = err instanceof Error ? err.message : String(err);
@@ -268,28 +290,33 @@ export async function handleChat(message: string): Promise<number> {
     const provider = await createProvider(config);
     process.on("exit", () => provider.dispose());
 
-    // Auto-select model
-    let modelId: string;
-    if (provider.autoSelect) {
-      modelId = await provider.autoSelect();
-    } else {
-      const models = await provider.listModels();
-      if (models.length === 0) {
-        throw new Error("No models available from provider");
+    try {
+      // Auto-select model
+      let modelId: string;
+      if (provider.autoSelect) {
+        modelId = await provider.autoSelect();
+      } else {
+        const models = await provider.listModels();
+        if (models.length === 0) {
+          throw new Error("No models available from provider");
+        }
+        modelId = models[0].id;
       }
-      modelId = models[0].id;
+
+      const response = await provider.chat({
+        model: modelId,
+        systemPrompt: "",
+        messages: [{ role: "user", content: message }],
+        stream: false,
+      });
+      progress("done\n");
+
+      process.stdout.write(response.content + "\n");
+      return EXIT_CODES.SUCCESS;
+    } catch (err) {
+      provider.dispose();
+      throw err;
     }
-
-    const response = await provider.chat({
-      model: modelId,
-      systemPrompt: "",
-      messages: [{ role: "user", content: message }],
-      stream: false,
-    });
-    progress("done\n");
-
-    process.stdout.write(response.content + "\n");
-    return EXIT_CODES.SUCCESS;
   } catch (err) {
     const code = mapErrorToExitCode(err);
     const message_ = err instanceof Error ? err.message : String(err);
