@@ -477,7 +477,11 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
     const configInfo = await resolveConfigStatus();
 
     // Provider health check
-    let apiResult: StatusOutput["api"];
+    let apiResult: StatusOutput["api"] = {
+      reachable: false,
+      latencyMs: null,
+      error: "provider not initialized",
+    };
     let provider: Awaited<ReturnType<typeof createProvider>> | null = null;
     let healthy = auth.valid;
 
@@ -514,7 +518,7 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
 
     // Model resolution
     let resolvedModel: string | null = null;
-    if (provider && apiResult!.reachable && config.model === "auto" && provider.autoSelect) {
+    if (provider && apiResult.reachable && config.model === "auto" && provider.autoSelect) {
       try {
         resolvedModel = await provider.autoSelect();
       } catch {
@@ -525,7 +529,7 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
     // List models (only when reachable)
     let models: string[] | null = null;
     let modelsError: string | null = null;
-    if (provider && apiResult!.reachable) {
+    if (provider && apiResult.reachable) {
       try {
         const list = await provider.listModels();
         models = list.map((m) => m.id);
@@ -546,7 +550,7 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
       format: config.format,
       config: configInfo,
       auth,
-      api: apiResult!,
+      api: apiResult,
       models,
       modelsError,
       healthy,
