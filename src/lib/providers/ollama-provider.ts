@@ -163,7 +163,7 @@ export class OllamaProvider extends OpenAIChatProvider {
       tagsResponse = await fetch(`${this.ollamaRoot}/api/tags`);
     } catch (err) {
       throw new ClientError(
-        "timeout",
+        "provider_unavailable",
         `Network error fetching Ollama models: ${err instanceof Error ? err.message : String(err)}`,
         true,
         err instanceof Error ? err : undefined
@@ -220,13 +220,13 @@ export class OllamaProvider extends OpenAIChatProvider {
           numCtx = parseInt(match[1], 10);
         }
       } else {
-        console.error(
-          `[OllamaProvider] Warning: /api/show failed for model '${name}' (${response.status}) — using ${DEFAULT_CONTEXT_LENGTH} default`
+        process.stderr.write(
+          `[ollama] Warning: /api/show failed for model '${name}' (${response.status}) — using ${DEFAULT_CONTEXT_LENGTH} default\n`
         );
       }
     } catch (err) {
-      console.error(
-        `[OllamaProvider] Warning: /api/show error for model '${name}': ${err instanceof Error ? err.message : String(err)} — using ${DEFAULT_CONTEXT_LENGTH} default`
+      process.stderr.write(
+        `[ollama] Warning: /api/show error for model '${name}': ${err instanceof Error ? err.message : String(err)} — using ${DEFAULT_CONTEXT_LENGTH} default\n`
       );
     }
 

@@ -340,4 +340,46 @@ describe("OllamaProvider", () => {
       expect(response.content).toBe("Hello from Ollama");
     });
   });
+
+  describe("chatStream()", () => {
+    it("targets /v1/chat/completions (not /chat/completions)", async () => {
+      let hitV1 = false;
+      server.use(
+        http.post(`${OLLAMA_ROOT}/v1/chat/completions`, () => {
+          hitV1 = true;
+          const encoder = new TextEncoder();
+          const body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" }, finish_reason: null }] })}\n\n`
+                )
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          });
+          return new HttpResponse(body, {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        })
+      );
+
+      const provider = new OllamaProvider();
+      const chunks: string[] = [];
+      for await (const chunk of provider.chatStream({
+        model: "llama3:latest",
+        systemPrompt: "You are a reviewer",
+        messages: [{ role: "user", content: "Review this" }],
+        stream: true,
+      })) {
+        if (chunk.type === "content" && chunk.text != null) {
+          chunks.push(chunk.text);
+        }
+      }
+
+      expect(hitV1).toBe(true);
+      expect(chunks).toContain("Hello");
+    });
+  });
 });
