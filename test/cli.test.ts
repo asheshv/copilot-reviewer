@@ -19,11 +19,34 @@ import {
 // Mocks
 // ============================================================================
 
-const mockChat = vi.fn();
-const mockChatStream = vi.fn();
-const mockListModels = vi.fn();
-const mockAutoSelect = vi.fn();
-const mockValidateModel = vi.fn();
+const {
+  mockChat,
+  mockChatStream,
+  mockListModels,
+  mockAutoSelect,
+  mockValidateModel,
+  mockDispose,
+  mockProvider,
+} = vi.hoisted(() => {
+  const mockChat = vi.fn();
+  const mockChatStream = vi.fn();
+  const mockListModels = vi.fn();
+  const mockAutoSelect = vi.fn();
+  const mockValidateModel = vi.fn();
+  const mockDispose = vi.fn();
+  const mockProvider = {
+    name: "copilot",
+    chat: mockChat,
+    chatStream: mockChatStream,
+    listModels: mockListModels,
+    autoSelect: mockAutoSelect,
+    validateModel: mockValidateModel,
+    initialize: vi.fn().mockResolvedValue(undefined),
+    dispose: mockDispose,
+    healthCheck: vi.fn().mockResolvedValue({ ok: true, latencyMs: 10 }),
+  };
+  return { mockChat, mockChatStream, mockListModels, mockAutoSelect, mockValidateModel, mockDispose, mockProvider };
+});
 
 vi.mock("../src/lib/review.js", () => ({
   review: vi.fn(),
@@ -34,25 +57,9 @@ vi.mock("../src/lib/config.js", () => ({
   loadConfig: vi.fn(),
 }));
 
-vi.mock("../src/lib/auth.js", () => ({
-  createDefaultAuthProvider: vi.fn(() => ({
-    getAuthenticatedHeaders: vi.fn().mockResolvedValue({ Authorization: "token test" }),
-  })),
-}));
-
-vi.mock("../src/lib/client.js", () => ({
-  CopilotClient: vi.fn().mockImplementation(() => ({
-    chat: mockChat,
-    chatStream: mockChatStream,
-  })),
-}));
-
-vi.mock("../src/lib/models.js", () => ({
-  ModelManager: vi.fn().mockImplementation(() => ({
-    listModels: mockListModels,
-    autoSelect: mockAutoSelect,
-    validateModel: mockValidateModel,
-  })),
+vi.mock("../src/lib/providers/index.js", () => ({
+  createProvider: vi.fn().mockResolvedValue(mockProvider),
+  availableProviders: vi.fn().mockReturnValue(["copilot"]),
 }));
 
 vi.mock("../src/lib/formatter.js", () => ({
@@ -607,7 +614,6 @@ describe("CLI", () => {
 
       expect(mockChat).toHaveBeenCalledWith(
         expect.objectContaining({ systemPrompt: "" }),
-        expect.any(Boolean)
       );
     });
 

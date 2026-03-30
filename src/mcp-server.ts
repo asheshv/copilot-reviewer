@@ -13,9 +13,8 @@ import {
 } from "./lib/types.js";
 import { review } from "./lib/review.js";
 import { loadConfig } from "./lib/config.js";
-import { createDefaultAuthProvider } from "./lib/auth.js";
-import { CopilotClient } from "./lib/client.js";
-import { ModelManager } from "./lib/models.js";
+import { createProvider } from "./lib/providers/index.js";
+import type { ReviewProvider } from "./lib/providers/types.js";
 
 // ============================================================================
 // Constants
@@ -31,29 +30,14 @@ type DiffMode = (typeof VALID_MODES)[number];
 // Shared instances (long-lived, cached across tool invocations)
 // ============================================================================
 
-let _auth: ReturnType<typeof createDefaultAuthProvider> | null = null;
-let _client: CopilotClient | null = null;
-let _models: ModelManager | null = null;
+let _provider: ReviewProvider | null = null;
 
-function getAuth(): ReturnType<typeof createDefaultAuthProvider> {
-  if (!_auth) {
-    _auth = createDefaultAuthProvider();
+async function getProvider(): Promise<ReviewProvider> {
+  if (!_provider) {
+    const config = await loadConfig();
+    _provider = await createProvider(config);
   }
-  return _auth;
-}
-
-function getClient(): CopilotClient {
-  if (!_client) {
-    _client = new CopilotClient(getAuth());
-  }
-  return _client;
-}
-
-function getModelManager(): ModelManager {
-  if (!_models) {
-    _models = new ModelManager(getAuth());
-  }
-  return _models;
+  return _provider;
 }
 
 // ============================================================================
@@ -164,9 +148,8 @@ export async function handleReview(params: Record<string, unknown>): Promise<Cal
       model: params.model as string | undefined,
     };
 
-    const client = getClient();
-    const models = getModelManager();
-    const result = await review(reviewOptions, client, models);
+    const provider = await getProvider();
+    const result = await review(reviewOptions, provider);
 
     const contentBlocks: Array<{ type: "text"; text: string }> = [
       {
@@ -207,29 +190,28 @@ export async function handleChat(params: Record<string, unknown>): Promise<CallT
     const context = (params.context as string) || "";
     const modelOverride = params.model as string | undefined;
 
-    const client = getClient();
-    const models = getModelManager();
+    const provider = await getProvider();
 
     // Resolve model
     let modelId: string;
     if (modelOverride) {
       modelId = modelOverride;
+    } else if (provider.autoSelect) {
+      modelId = await provider.autoSelect();
     } else {
-      modelId = await models.autoSelect();
+      const models = await provider.listModels();
+      if (models.length === 0) {
+        throw new Error("No models available from provider");
+      }
+      modelId = models[0].id;
     }
 
-    const info = await models.validateModel(modelId);
-    const useResponsesApi = info.endpoints.includes("/responses");
-
-    const chatResponse = await client.chat(
-      {
-        model: modelId,
-        systemPrompt: context,
-        messages: [{ role: "user", content: message }],
-        stream: false,
-      },
-      useResponsesApi,
-    );
+    const chatResponse = await provider.chat({
+      model: modelId,
+      systemPrompt: context,
+      messages: [{ role: "user", content: message }],
+      stream: false,
+    });
 
     return {
       content: [{
@@ -248,8 +230,8 @@ export async function handleChat(params: Record<string, unknown>): Promise<CallT
 
 export async function handleModels(): Promise<CallToolResult> {
   try {
-    const models = getModelManager();
-    const modelList = await models.listModels();
+    const provider = await getProvider();
+    const modelList = await provider.listModels();
 
     return {
       content: [{
@@ -344,7 +326,5 @@ export async function startServer(): Promise<void> {
 
 // Reset shared state (for testing)
 export function _resetState(): void {
-  _auth = null;
-  _client = null;
-  _models = null;
+  _provider = null;
 }

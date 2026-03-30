@@ -16,9 +16,7 @@ import {
   type CLIOverrides,
 } from "./lib/index.js";
 import { loadConfig } from "./lib/config.js";
-import { createDefaultAuthProvider } from "./lib/auth.js";
-import { CopilotClient } from "./lib/client.js";
-import { ModelManager } from "./lib/models.js";
+import { createProvider } from "./lib/providers/index.js";
 import { review, reviewStream } from "./lib/review.js";
 import { detectHighSeverity, formatNdjsonChunk } from "./lib/formatter.js";
 
@@ -104,6 +102,9 @@ interface CLIOpts {
   config?: string;
   verbose?: boolean;
   mcp?: boolean;
+  provider?: string;
+  chunking?: string;
+  ollamaUrl?: string;
 }
 
 // ============================================================================
@@ -131,6 +132,9 @@ export async function handleReview(
     if (opts.stream !== undefined) cliOverrides.stream = opts.stream;
     if (opts.prompt) cliOverrides.prompt = opts.prompt;
     if (opts.config) cliOverrides.config = opts.config;
+    if (opts.provider) cliOverrides.provider = opts.provider;
+    if (opts.chunking) cliOverrides.chunking = opts.chunking as "auto" | "always" | "never";
+    if (opts.ollamaUrl) cliOverrides.ollamaUrl = opts.ollamaUrl;
 
     progress("Loading configuration... ");
     debug(verbose, `CLI overrides: ${JSON.stringify(cliOverrides)}`);
@@ -142,10 +146,9 @@ export async function handleReview(
     const diffOpts = buildDiffOptions(mode, modeArg, config.defaultBase);
     debug(verbose, `Diff mode: ${diffOpts.mode}, arg: ${modeArg ?? "none"}`);
 
-    // Create infrastructure
-    const auth = createDefaultAuthProvider();
-    const client = new CopilotClient(auth);
-    const models = new ModelManager(auth);
+    // Create provider
+    const provider = await createProvider(config);
+    process.on("exit", () => provider.dispose());
 
     const reviewOpts: ReviewOptions = {
       diff: diffOpts,
@@ -157,7 +160,7 @@ export async function handleReview(
 
     if (shouldStream) {
       progress("Requesting review (streaming)... \n");
-      const result = await reviewStream(reviewOpts, client, models);
+      const result = await reviewStream(reviewOpts, provider);
 
       if (result.warnings.length > 0) {
         for (const w of result.warnings) {
@@ -193,7 +196,7 @@ export async function handleReview(
       return detectHighSeverity(fullContent) ? EXIT_CODES.HIGH_SEVERITY : EXIT_CODES.SUCCESS;
     } else {
       progress("Requesting review... ");
-      const result = await review(reviewOpts, client, models);
+      const result = await review(reviewOpts, provider);
       progress("done\n");
 
       if (result.warnings.length > 0) {
@@ -223,12 +226,16 @@ export async function handleReview(
 // Handler: models
 // ============================================================================
 
-export async function handleModels(): Promise<number> {
+export async function handleModels(opts: Pick<CLIOpts, "provider" | "ollamaUrl"> = {}): Promise<number> {
   try {
     progress("Fetching models... ");
-    const auth = createDefaultAuthProvider();
-    const models = new ModelManager(auth);
-    const list = await models.listModels();
+    const cliOverrides: CLIOverrides = {};
+    if (opts.provider) cliOverrides.provider = opts.provider;
+    if (opts.ollamaUrl) cliOverrides.ollamaUrl = opts.ollamaUrl;
+    const config = await loadConfig(cliOverrides);
+    const provider = await createProvider(config);
+    process.on("exit", () => provider.dispose());
+    const list = await provider.listModels();
     progress("done\n");
 
     // Print table header
@@ -257,25 +264,28 @@ export async function handleModels(): Promise<number> {
 export async function handleChat(message: string): Promise<number> {
   try {
     progress("Sending message... ");
-    const auth = createDefaultAuthProvider();
-    const client = new CopilotClient(auth);
-    const models = new ModelManager(auth);
+    const config = await loadConfig();
+    const provider = await createProvider(config);
+    process.on("exit", () => provider.dispose());
 
     // Auto-select model
-    const modelId = await models.autoSelect();
-    const modelInfo = await models.validateModel(modelId);
+    let modelId: string;
+    if (provider.autoSelect) {
+      modelId = await provider.autoSelect();
+    } else {
+      const models = await provider.listModels();
+      if (models.length === 0) {
+        throw new Error("No models available from provider");
+      }
+      modelId = models[0].id;
+    }
 
-    const useResponsesApi = modelInfo.endpoints.includes("/responses");
-
-    const response = await client.chat(
-      {
-        model: modelInfo.id,
-        systemPrompt: "",
-        messages: [{ role: "user", content: message }],
-        stream: false,
-      },
-      useResponsesApi,
-    );
+    const response = await provider.chat({
+      model: modelId,
+      systemPrompt: "",
+      messages: [{ role: "user", content: message }],
+      stream: false,
+    });
     progress("done\n");
 
     process.stdout.write(response.content + "\n");
@@ -309,6 +319,9 @@ export function buildProgram(): Command {
     .option("--prompt <text>", "Override review prompt")
     .option("--config <path>", "Override config file path")
     .option("--verbose", "Enable debug logging to stderr")
+    .option("--provider <name>", "Review provider: copilot, ollama")
+    .option("--chunking <mode>", "Chunking mode: auto, always, never")
+    .option("--ollama-url <url>", "Ollama base URL")
     .addOption(new Option("--mcp", "Start as MCP server").hideHelp())
     .action(async (mode: string, modeArg: string | undefined, opts: CLIOpts) => {
       const code = await handleReview(mode, modeArg, opts);
@@ -319,8 +332,10 @@ export function buildProgram(): Command {
   program
     .command("models")
     .description("List available models")
-    .action(async () => {
-      const code = await handleModels();
+    .option("--provider <name>", "Review provider: copilot, ollama")
+    .option("--ollama-url <url>", "Ollama base URL")
+    .action(async (opts: Pick<CLIOpts, "provider" | "ollamaUrl">) => {
+      const code = await handleModels(opts);
       process.exit(code);
     });
 

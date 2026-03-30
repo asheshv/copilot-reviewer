@@ -8,12 +8,35 @@ import {
 } from "../src/lib/types.js";
 import type { ReviewResult, ModelInfo, ChatResponse } from "../src/lib/types.js";
 
-// Shared mock instances for client and model manager
-const mockChat = vi.fn();
-const mockChatStream = vi.fn();
-const mockListModels = vi.fn();
-const mockAutoSelect = vi.fn();
-const mockValidateModel = vi.fn();
+// Shared mock instances for provider — use vi.hoisted so they are available in vi.mock factories
+const {
+  mockChat,
+  mockChatStream,
+  mockListModels,
+  mockAutoSelect,
+  mockValidateModel,
+  mockDispose,
+  mockProvider,
+} = vi.hoisted(() => {
+  const mockChat = vi.fn();
+  const mockChatStream = vi.fn();
+  const mockListModels = vi.fn();
+  const mockAutoSelect = vi.fn();
+  const mockValidateModel = vi.fn();
+  const mockDispose = vi.fn();
+  const mockProvider = {
+    name: "copilot",
+    chat: mockChat,
+    chatStream: mockChatStream,
+    listModels: mockListModels,
+    autoSelect: mockAutoSelect,
+    validateModel: mockValidateModel,
+    initialize: vi.fn().mockResolvedValue(undefined),
+    dispose: mockDispose,
+    healthCheck: vi.fn().mockResolvedValue({ ok: true, latencyMs: 10 }),
+  };
+  return { mockChat, mockChatStream, mockListModels, mockAutoSelect, mockValidateModel, mockDispose, mockProvider };
+});
 
 // Mock all lib dependencies before importing the module under test
 vi.mock("../src/lib/review.js", () => ({
@@ -24,25 +47,9 @@ vi.mock("../src/lib/config.js", () => ({
   loadConfig: vi.fn(),
 }));
 
-vi.mock("../src/lib/auth.js", () => ({
-  createDefaultAuthProvider: vi.fn(() => ({
-    getAuthenticatedHeaders: vi.fn().mockResolvedValue({ Authorization: "token test" }),
-  })),
-}));
-
-vi.mock("../src/lib/client.js", () => ({
-  CopilotClient: vi.fn().mockImplementation(() => ({
-    chat: mockChat,
-    chatStream: mockChatStream,
-  })),
-}));
-
-vi.mock("../src/lib/models.js", () => ({
-  ModelManager: vi.fn().mockImplementation(() => ({
-    listModels: mockListModels,
-    autoSelect: mockAutoSelect,
-    validateModel: mockValidateModel,
-  })),
+vi.mock("../src/lib/providers/index.js", () => ({
+  createProvider: vi.fn().mockResolvedValue(mockProvider),
+  availableProviders: vi.fn().mockReturnValue(["copilot"]),
 }));
 
 import { review as mockReview } from "../src/lib/review.js";
@@ -216,8 +223,7 @@ describe("MCP Server", () => {
           config: mockConfig,
           model: "gpt-4.1",
         }),
-        expect.anything(), // client
-        expect.anything(), // models
+        expect.anything(), // provider
       );
     });
 
@@ -291,7 +297,7 @@ describe("MCP Server", () => {
       mockChat.mockResolvedValue(mockChatResponse);
     });
 
-    it("calls client.chat with empty systemPrompt when no context", async () => {
+    it("calls provider.chat with empty systemPrompt when no context", async () => {
       const result = await handleChat({ message: "What is this code?" });
 
       expect(result.isError).toBeUndefined();
@@ -301,7 +307,6 @@ describe("MCP Server", () => {
           messages: [{ role: "user", content: "What is this code?" }],
           stream: false,
         }),
-        false, // useResponsesApi — /chat/completions only
       );
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.content).toBe("Here is my answer.");
@@ -317,7 +322,6 @@ describe("MCP Server", () => {
         expect.objectContaining({
           systemPrompt: "function foo() {}",
         }),
-        false,
       );
     });
 
@@ -334,8 +338,10 @@ describe("MCP Server", () => {
     it("uses explicit model override when provided", async () => {
       await handleChat({ message: "Hello", model: "claude-sonnet-4" });
 
-      expect(mockValidateModel).toHaveBeenCalledWith("claude-sonnet-4");
       expect(mockAutoSelect).not.toHaveBeenCalled();
+      expect(mockChat).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "claude-sonnet-4" }),
+      );
     });
 
     it("uses autoSelect when no model override", async () => {

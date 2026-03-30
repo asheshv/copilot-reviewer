@@ -26,18 +26,20 @@ describe("public API exports", () => {
     expect(lib.clearSessionCache).toBeTypeOf("function");
   });
 
-  it("exports client classes", () => {
-    expect(lib.CopilotClient).toBeDefined();
+  it("exports provider factory functions", () => {
+    expect(lib.createProvider).toBeTypeOf("function");
+    expect(lib.availableProviders).toBeTypeOf("function");
+  });
+
+  it("exports provider classes", () => {
+    expect(lib.CopilotProvider).toBeDefined();
+    expect(lib.OpenAIChatProvider).toBeDefined();
   });
 
   it("exports streaming functions", () => {
     expect(lib.parseSSEStream).toBeTypeOf("function");
     expect(lib.parseChatCompletionChunk).toBeTypeOf("function");
     expect(lib.parseResponsesChunk).toBeTypeOf("function");
-  });
-
-  it("exports model manager", () => {
-    expect(lib.ModelManager).toBeDefined();
   });
 
   it("exports diff functions", () => {
