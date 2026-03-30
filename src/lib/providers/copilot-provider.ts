@@ -274,56 +274,61 @@ export class CopilotProvider extends OpenAIChatProvider {
       return super.chat(request);
     }
 
-    return this.retry(async () => {
-      const headers = await this._buildRequestHeaders();
-      const body = this._buildResponsesBody(request);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    // Try Responses API (with retry for transient errors only — 404/400 break out immediately)
+    try {
+      return await this.retry(async () => {
+        const headers = await this._buildRequestHeaders();
+        const body = this._buildResponsesBody(request);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30_000);
 
-      try {
-        const response = await fetch(`${this.baseUrl}/responses`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(body),
-          signal: controller.signal,
-        });
+        try {
+          const response = await fetch(`${this.baseUrl}/responses`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          });
 
-        clearTimeout(timeoutId);
+          clearTimeout(timeoutId);
 
-        // Fallback trigger: 404 or 400 from /responses — set flag and delegate to super (no nested retry)
-        if (response.status === 404 || response.status === 400) {
-          this._responsesFallback.set(request.model, true);
-          return super.chat(request);
-        }
+          if (!response.ok) {
+            await this.handleErrorResponse(response);
+          }
 
-        if (!response.ok) {
-          await this.handleErrorResponse(response);
-        }
+          const json = await response.json();
+          return this._parseResponsesApiResponse(json);
+        } catch (error) {
+          clearTimeout(timeoutId);
 
-        const json = await response.json();
-        return this._parseResponsesApiResponse(json);
-      } catch (error) {
-        clearTimeout(timeoutId);
+          if (error instanceof ClientError || error instanceof AuthError) {
+            throw error;
+          }
 
-        if (error instanceof ClientError || error instanceof AuthError) {
+          if (error instanceof Error) {
+            if (error.name === "AbortError") {
+              throw new ClientError(
+                "timeout",
+                `Request timed out after 30000ms`,
+                true,
+                error
+              );
+            }
+            throw new ClientError("provider_unavailable", `Network error: ${error.message}`, true, error);
+          }
+
           throw error;
         }
-
-        if (error instanceof Error) {
-          if (error.name === "AbortError") {
-            throw new ClientError(
-              "timeout",
-              `Request timed out after 30000ms`,
-              true,
-              error
-            );
-          }
-          throw new ClientError("provider_unavailable", `Network error: ${error.message}`, true, error);
-        }
-
-        throw error;
+      });
+    } catch (err) {
+      // On 404/400: set fallback flag and use /chat/completions outside retry() —
+      // super.chat() has its own retry loop; no nesting.
+      if (err instanceof ClientError && (err.status === 404 || err.status === 400)) {
+        this._responsesFallback.set(request.model, true);
+        return super.chat(request);
       }
-    });
+      throw err;
+    }
   }
 
   /**
@@ -401,6 +406,10 @@ export class CopilotProvider extends OpenAIChatProvider {
 
       if (error instanceof Error && error.name === "AbortError") {
         throw new ClientError("timeout", `Request timed out after 30000ms`, true, error);
+      }
+
+      if (error instanceof Error) {
+        throw new ClientError("provider_unavailable", `Network error: ${error.message}`, true, error);
       }
 
       throw error;

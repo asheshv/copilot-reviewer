@@ -331,7 +331,12 @@ function applyRound4(chunks: string[], availableChars: number): { chunks: string
       return highContent.trim();
     }
 
-    const otherContent = otherLines.join("\n").slice(0, remainingChars);
+    let otherContent = otherLines.join("\n").slice(0, remainingChars);
+    // Snap to nearest newline to avoid truncating mid-line
+    const snapNewline = otherContent.lastIndexOf("\n");
+    if (snapNewline > 0) {
+      otherContent = otherContent.slice(0, snapNewline);
+    }
     return (otherContent + "\n" + highContent).trim();
   });
 
@@ -380,6 +385,11 @@ export function truncateForReduce(
       return { truncated: current, warnings, didTruncate: true };
     }
   }
+
+  // NOTE (MEDIUM-3): Rounds 1–3 operate on structured severity markers (### HIGH, [MEDIUM], etc.).
+  // If a chunk has no markers (unstructured model output), splitChunkIntoBlocks() treats the
+  // entire text as a single MEDIUM block and the round may produce no net change — it silently
+  // skips. Round 4 (proportional truncation) handles unstructured output unconditionally.
 
   // --- Round 2: compress MEDIUM to summary ---
   const r2 = applyRound2(current);

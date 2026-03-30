@@ -166,7 +166,7 @@ async function chunkedReview(
 
   for (let i = 0; i < totalChunks; i++) {
     const chunkSegments = chunks[i];
-    const chunkFiles = chunkSegments.map((s) => s.path);
+    const chunkFiles = [...new Set(chunkSegments.map((s) => s.path))];
 
     const makeRequest = (segs: typeof chunkSegments, chunkIdx: number, chunkOf: number): ChatRequest => {
       const segPaths = new Set(segs.map((s) => s.path));
@@ -501,7 +501,7 @@ async function chunkedReviewStream(
 
   for (let i = 0; i < totalChunks; i++) {
     const chunkSegments = chunks[i];
-    const chunkFiles = chunkSegments.map((s) => s.path);
+    const chunkFiles = [...new Set(chunkSegments.map((s) => s.path))];
 
     const chunkSegPaths = new Set(chunkSegments.map((s) => s.path));
     const chunkFileChanges = diff.files.filter((f) => chunkSegPaths.has(f.path));

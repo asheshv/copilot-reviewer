@@ -217,6 +217,10 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
         );
       }
 
+      if (error instanceof Error) {
+        throw new ClientError("provider_unavailable", `Network error: ${error.message}`, true, error);
+      }
+
       throw error;
     }
   }
