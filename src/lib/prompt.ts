@@ -95,10 +95,14 @@ export function extractHunkRanges(segments: FileSegment[]): Map<string, string[]
     const ranges: string[] = [];
     for (const hunk of seg.hunks) {
       const count = parseHunkLineCount(hunk.header);
+      if (count === 0) continue; // skip context-only hunks (no lines changed)
       const startLine = hunk.startLine;
       const endLine = startLine + count - 1;
       ranges.push(`${startLine}-${endLine}`);
     }
+
+    // Skip if all hunks were count=0 (no lines changed)
+    if (ranges.length === 0) continue;
 
     // Merge ranges for the same file (multiple segments can share a path when
     // splitFileByHunks produces hunk-level FileSegments)

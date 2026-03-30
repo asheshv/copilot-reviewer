@@ -332,6 +332,65 @@ describe("extractHunkRanges", () => {
     expect(ranges.get("a.ts")).toEqual(["1-3"]);
     expect(ranges.get("b.ts")).toEqual(["5-8"]);
   });
+
+  it("merges ranges correctly when two FileSegments share the same path", () => {
+    const segments: FileSegment[] = [
+      {
+        path: "src/shared.ts",
+        raw: "@@ -1,3 +1,4 @@\n+added",
+        estimatedTokens: 10,
+        hunks: [
+          {
+            header: "@@ -1,3 +1,4 @@",
+            raw: "@@ -1,3 +1,4 @@\n+added",
+            startLine: 1,
+            estimatedTokens: 5,
+          },
+        ],
+      },
+      {
+        path: "src/shared.ts",
+        raw: "@@ -30,2 +31,5 @@\n+more",
+        estimatedTokens: 10,
+        hunks: [
+          {
+            header: "@@ -30,2 +31,5 @@",
+            raw: "@@ -30,2 +31,5 @@\n+more",
+            startLine: 31,
+            estimatedTokens: 5,
+          },
+        ],
+      },
+    ];
+
+    const ranges = extractHunkRanges(segments);
+
+    // Both segments' ranges must appear under the single shared path key
+    expect(ranges.get("src/shared.ts")).toEqual(["1-4", "31-35"]);
+  });
+
+  it("excludes count=0 hunk header from ranges", () => {
+    const segments: FileSegment[] = [
+      {
+        path: "src/ctx.ts",
+        raw: "@@ -5,0 +6,0 @@\n context",
+        estimatedTokens: 5,
+        hunks: [
+          {
+            header: "@@ -5,0 +6,0 @@",
+            raw: "@@ -5,0 +6,0 @@\n context",
+            startLine: 6,
+            estimatedTokens: 5,
+          },
+        ],
+      },
+    ];
+
+    const ranges = extractHunkRanges(segments);
+
+    // count=0 → no range produced; file key omitted entirely
+    expect(ranges.has("src/ctx.ts")).toBe(false);
+  });
 });
 
 describe("assembleChunkMessage", () => {
@@ -458,6 +517,26 @@ describe("assembleReduceMessage", () => {
 
     expect(chunk1Idx).toBeGreaterThan(-1);
     expect(allFilesIdx).toBeGreaterThan(chunk1Idx);
+  });
+
+  it("handles a single chunk correctly", () => {
+    const chunkFindings = [
+      { files: ["solo.ts"], content: "Only finding" },
+    ];
+    const allFiles: FileChange[] = [
+      { path: "solo.ts", status: "added", insertions: 8, deletions: 0 },
+    ];
+    const allHunkRanges = new Map<string, string[]>([
+      ["solo.ts", ["1-8"]],
+    ]);
+
+    const msg = assembleReduceMessage(chunkFindings, allFiles, allHunkRanges);
+
+    expect(msg).toContain("from 1 review passes");
+    expect(msg).toContain("## Chunk 1 (files: solo.ts)");
+    expect(msg).toContain("Only finding");
+    expect(msg).toContain("## All files in this review (for cross-file analysis)");
+    expect(msg).toContain("| solo.ts | added | 1-8 |");
   });
 });
 
