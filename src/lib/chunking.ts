@@ -58,7 +58,11 @@ export function splitDiffByFile(rawDiff: string): SplitResult {
 
   // Check for diff --git boundaries
   if (!rawDiff.includes("diff --git ")) {
-    // Return the whole thing as a single "unknown" segment
+    // Empty or whitespace-only diff → no segments
+    if (!rawDiff.trim()) {
+      return { segments: [], warnings };
+    }
+    // Non-empty but no git boundaries → treat as single "unknown" segment
     const raw = rawDiff;
     const hunks = parseHunks(raw, "unknown", warnings);
     segments.push({
@@ -231,9 +235,22 @@ export function binPackFiles(
         // File alone exceeds budget → split by hunks
         const hunkChunks = splitFileByHunks(seg, chunkBudget);
         for (const hunkChunk of hunkChunks) {
-          const tokenSum = hunkChunk.reduce((s, f) => s + f.estimatedTokens, 0);
-          chunks.push(hunkChunk);
-          chunkTokens.push(tokenSum);
+          const hunkTokens = hunkChunk.reduce((s, f) => s + f.estimatedTokens, 0);
+          // Try to fit hunk chunk into existing bins
+          let placed = false;
+          for (let j = 0; j < chunks.length; j++) {
+            const overhead = 10 * (chunks[j].length + 1);
+            if (chunkTokens[j] + hunkTokens + overhead < chunkBudget) {
+              chunks[j].push(...hunkChunk);
+              chunkTokens[j] += hunkTokens;
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) {
+            chunks.push([...hunkChunk]);
+            chunkTokens.push(hunkTokens);
+          }
         }
       }
     }

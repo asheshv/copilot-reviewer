@@ -190,7 +190,11 @@ export function assembleReduceMessage(
   for (let i = 0; i < chunkFindings.length; i++) {
     const { files, content } = chunkFindings[i];
     lines.push(`## Chunk ${i + 1} (files: ${files.join(", ")})`);
-    lines.push(content);
+    if (content.trim()) {
+      lines.push(content);
+    } else {
+      lines.push("No issues found in this chunk.");
+    }
     lines.push("");
   }
 

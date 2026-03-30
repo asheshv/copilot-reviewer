@@ -298,7 +298,8 @@ function applyRound3(chunks: string[]): { chunks: string[]; mediumCompressed: nu
 // ---------------------------------------------------------------------------
 
 function applyRound4(chunks: string[], availableChars: number): { chunks: string[]; warning: string } {
-  const charsPerChunk = Math.floor(availableChars / chunks.length);
+  // Subtract 4 chars (1 token) per chunk to guarantee ceil won't push over budget
+  const charsPerChunk = Math.max(0, Math.floor(availableChars / chunks.length) - 4);
   let pathological = false;
 
   const result = chunks.map(chunk => {
@@ -310,7 +311,12 @@ function applyRound4(chunks: string[], availableChars: number): { chunks: string
     const otherLines: string[] = [];
     let inHigh = false;
     for (const line of lines) {
-      if (/^(###\s*HIGH|\[HIGH\]|\*\*HIGH\*\*)/i.test(line.trim())) inHigh = true;
+      const trimmed = line.trim();
+      if (/^(###\s+HIGH|\[HIGH\]|\*\*HIGH\*\*)(\s|$)/i.test(trimmed)) {
+        inHigh = true;
+      } else if (/^(###\s+(MEDIUM|LOW)|\[(MEDIUM|LOW)\]|\*\*(MEDIUM|LOW)\*\*)(\s|$)/i.test(trimmed)) {
+        inHigh = false;
+      }
       if (inHigh) highLines.push(line);
       else otherLines.push(line);
     }

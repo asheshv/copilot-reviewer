@@ -128,24 +128,28 @@ export async function handleReview(params: Record<string, unknown>): Promise<Cal
   try {
     validateReviewParams(params);
 
-    const config = await loadConfig({
-      prompt: params.prompt as string | undefined,
-      model: params.model as string | undefined,
-    });
+    const prompt = typeof params.prompt === "string" ? params.prompt : undefined;
+    const model = typeof params.model === "string" ? params.model : undefined;
+    const base = typeof params.base === "string" ? params.base : undefined;
+    const range = typeof params.range === "string" ? params.range : undefined;
+    const count = typeof params.count === "number" ? params.count : undefined;
+    const pr = typeof params.pr === "number" ? params.pr : undefined;
+
+    const config = await loadConfig({ prompt, model });
 
     const diffOptions: DiffOptions = {
       mode: params.mode as DiffOptions["mode"],
-      base: params.base as string | undefined,
-      pr: params.pr as number | undefined,
-      range: params.range as string | undefined,
-      count: params.count as number | undefined,
+      base,
+      pr,
+      range,
+      count,
       ignorePaths: config.ignorePaths,
     };
 
     const reviewOptions: ReviewOptions = {
       diff: diffOptions,
       config,
-      model: params.model as string | undefined,
+      model,
     };
 
     const provider = await getProvider();
@@ -186,9 +190,9 @@ export async function handleReview(params: Record<string, unknown>): Promise<Cal
 
 export async function handleChat(params: Record<string, unknown>): Promise<CallToolResult> {
   try {
-    const message = params.message as string;
-    const context = (params.context as string) || "";
-    const modelOverride = params.model as string | undefined;
+    const message = typeof params.message === "string" ? params.message : "";
+    const context = typeof params.context === "string" ? params.context : "";
+    const modelOverride = typeof params.model === "string" ? params.model : undefined;
 
     const provider = await getProvider();
 

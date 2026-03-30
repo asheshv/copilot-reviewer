@@ -1,7 +1,7 @@
 // src/lib/review.ts
 
 import { collectDiff } from "./diff.js";
-import { assembleUserMessage, assembleChunkMessage, assembleReduceMessage, extractHunkRanges, getReduceSystemPrompt } from "./prompt.js";
+import { assembleUserMessage, assembleChunkMessage, assembleFileManifest, assembleReduceMessage, extractHunkRanges, getReduceSystemPrompt } from "./prompt.js";
 import { format } from "./formatter.js";
 import { splitDiffByFile, binPackFiles } from "./chunking.js";
 import { truncateForReduce } from "./truncation.js";
@@ -168,12 +168,18 @@ async function chunkedReview(
     const chunkSegments = chunks[i];
     const chunkFiles = chunkSegments.map((s) => s.path);
 
-    const makeRequest = (segs: typeof chunkSegments, chunkIdx: number, chunkOf: number): ChatRequest => ({
-      model: modelInfo.id,
-      systemPrompt: options.config.prompt,
-      messages: [{ role: "user", content: assembleChunkMessage(chunkIdx, chunkOf, segs, "") }],
-      stream: false,
-    });
+    const makeRequest = (segs: typeof chunkSegments, chunkIdx: number, chunkOf: number): ChatRequest => {
+      const segPaths = new Set(segs.map((s) => s.path));
+      const chunkFileChanges = diff.files.filter((f) => segPaths.has(f.path));
+      const chunkHunkRanges = extractHunkRanges(segs);
+      const fileManifest = assembleFileManifest(chunkFileChanges, chunkHunkRanges);
+      return {
+        model: modelInfo.id,
+        systemPrompt: options.config.prompt,
+        messages: [{ role: "user", content: assembleChunkMessage(chunkIdx, chunkOf, segs, fileManifest) }],
+        stream: false,
+      };
+    };
 
     let response;
     try {
@@ -292,10 +298,11 @@ async function chunkedReview(
 
   const chunkFindingsForReduce = chunkFindings.map((f, i) => ({
     files: f.files,
-    content: truncationPreamble + finalFindings[i],
+    content: finalFindings[i],
   }));
 
-  const reduceMessage = assembleReduceMessage(chunkFindingsForReduce, diff.files, hunkRanges);
+  const reduceMessageBody = assembleReduceMessage(chunkFindingsForReduce, diff.files, hunkRanges);
+  const reduceMessage = truncationPreamble + reduceMessageBody;
 
   let reduceContent: string;
   let reduceUsage: { totalTokens: number };
@@ -362,15 +369,15 @@ export async function reviewStream(
   // Step 2: Resolve model
   const modelInfo = await resolveModel(options, provider);
 
-  // Step 3: Check token budget / collect warnings
+  // Step 3: Route — chunked streaming or single-pass streaming
   const warnings: string[] = [];
-  checkTokenBudget(options.config.prompt, diff, modelInfo, warnings);
 
-  // Step 4: Route — chunked streaming or single-pass streaming
   if (shouldChunk(options.config, diff, modelInfo)) {
     return chunkedReviewStream(diff, modelInfo, options, provider, warnings);
   }
 
+  // Only check token budget for single-pass (chunking handles oversized diffs)
+  checkTokenBudget(options.config.prompt, diff, modelInfo, warnings);
   return singlePassStream(diff, modelInfo, options, provider, warnings);
 }
 
@@ -453,10 +460,13 @@ async function chunkedReviewStream(
 
   if (totalChunks === 1) {
     const [chunkSegments] = chunks;
+    const singleChunkFileChanges = diff.files.filter((f) => chunkSegments.some((s) => s.path === f.path));
+    const singleChunkHunkRanges = extractHunkRanges(chunkSegments);
+    const singleChunkManifest = assembleFileManifest(singleChunkFileChanges, singleChunkHunkRanges);
     const request: ChatRequest = {
       model: modelInfo.id,
       systemPrompt: options.config.prompt,
-      messages: [{ role: "user", content: assembleChunkMessage(0, 1, chunkSegments, "") }],
+      messages: [{ role: "user", content: assembleChunkMessage(0, 1, chunkSegments, singleChunkManifest) }],
       stream: true,
     };
 
@@ -493,12 +503,17 @@ async function chunkedReviewStream(
     const chunkSegments = chunks[i];
     const chunkFiles = chunkSegments.map((s) => s.path);
 
+    const chunkSegPaths = new Set(chunkSegments.map((s) => s.path));
+    const chunkFileChanges = diff.files.filter((f) => chunkSegPaths.has(f.path));
+    const chunkHunkRanges = extractHunkRanges(chunkSegments);
+    const chunkManifest = assembleFileManifest(chunkFileChanges, chunkHunkRanges);
+
     let response;
     try {
       response = await provider.chat({
         model: modelInfo.id,
         systemPrompt: options.config.prompt,
-        messages: [{ role: "user", content: assembleChunkMessage(i, totalChunks, chunkSegments, "") }],
+        messages: [{ role: "user", content: assembleChunkMessage(i, totalChunks, chunkSegments, chunkManifest) }],
         stream: false,
       });
     } catch (err) {
@@ -546,10 +561,11 @@ async function chunkedReviewStream(
 
   const chunkFindingsForReduce = chunkFindings.map((f, i) => ({
     files: f.files,
-    content: truncationPreamble + finalFindings[i],
+    content: finalFindings[i],
   }));
 
-  const reduceMessage = assembleReduceMessage(chunkFindingsForReduce, diff.files, hunkRanges);
+  const reduceMessageBody = assembleReduceMessage(chunkFindingsForReduce, diff.files, hunkRanges);
+  const reduceMessage = truncationPreamble + reduceMessageBody;
 
   if (process.stderr.isTTY) {
     process.stderr.write("Aggregating findings...\n");
@@ -621,9 +637,10 @@ async function resolveModel(
   options: ReviewOptions,
   provider: ReviewProvider,
 ): Promise<ModelInfo> {
-  const modelId = options.model ?? options.config.model;
+  const rawModelId = options.model ?? options.config.model;
+  const modelId = rawModelId?.trim() ?? null;
 
-  if (modelId == null || modelId.trim() === "" || modelId === "auto") {
+  if (modelId == null || modelId === "" || modelId === "auto") {
     if (!provider.autoSelect) {
       throw new ConfigError(
         "model_required",

@@ -132,6 +132,9 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
   // Layer 2: Environment variables
   const envProvider = process.env["CODEREVIEWER_PROVIDER"];
   if (envProvider !== undefined) {
+    // Not validated here to avoid importing availableProviders() and risking circular
+    // dependencies. createProvider() will throw a ConfigError with a clear message if the
+    // provider name is unknown (including source attribution).
     config.provider = envProvider;
   }
 
@@ -288,7 +291,18 @@ async function loadConfigLayer(
       if (jsonConfig.providerOptions.ollama?.baseUrl !== undefined) {
         validateUrl(jsonConfig.providerOptions.ollama.baseUrl, jsonPath);
       }
-      result.providerOptions = jsonConfig.providerOptions as ResolvedConfig["providerOptions"];
+      // Normalize providerOptions: fill in defaults rather than casting, so we never
+      // carry optional fields where required fields are expected downstream.
+      const normalized: ResolvedConfig["providerOptions"] = {};
+      if (jsonConfig.providerOptions.ollama !== undefined) {
+        normalized.ollama = {
+          baseUrl: jsonConfig.providerOptions.ollama.baseUrl ?? "http://localhost:11434",
+        };
+      }
+      for (const [key, val] of Object.entries(jsonConfig.providerOptions)) {
+        if (key !== "ollama") normalized[key] = val as Record<string, unknown>;
+      }
+      result.providerOptions = normalized;
     }
 
     // Handle prompt field (inline text or file path)

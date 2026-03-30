@@ -7,7 +7,7 @@ import type {
   StreamChunk,
   ModelInfo,
 } from "../types.js";
-import { ClientError, ModelError } from "../types.js";
+import { ClientError, AuthError, ModelError } from "../types.js";
 import {
   parseSSEStream,
   parseChatCompletionChunk,
@@ -90,6 +90,7 @@ export class CopilotProvider extends OpenAIChatProvider {
   override async initialize(): Promise<void> {
     await super.initialize();
     await this.getHeaders(); // validates auth; uses cached token on repeat calls
+    await this.listModels(); // warm model cache so Responses API routing works from first call
   }
 
   /**
@@ -262,6 +263,11 @@ export class CopilotProvider extends OpenAIChatProvider {
    * Non-streaming chat with Responses API routing.
    */
   async chat(request: ChatRequest): Promise<ChatResponse> {
+    // If already fallen back for this model, skip /responses entirely — super.chat() has its own retry
+    if (this._responsesFallback.get(request.model)) {
+      return super.chat(request);
+    }
+
     const useResponses = await this._shouldUseResponsesApi(request.model);
 
     if (!useResponses) {
@@ -269,11 +275,6 @@ export class CopilotProvider extends OpenAIChatProvider {
     }
 
     return this.retry(async () => {
-      // If a previous attempt already marked this model for fallback, use base
-      if (this._responsesFallback.get(request.model)) {
-        return super.chat(request);
-      }
-
       const headers = await this._buildRequestHeaders();
       const body = this._buildResponsesBody(request);
       const controller = new AbortController();
@@ -289,7 +290,7 @@ export class CopilotProvider extends OpenAIChatProvider {
 
         clearTimeout(timeoutId);
 
-        // Fallback trigger: 404 or 400 from /responses
+        // Fallback trigger: 404 or 400 from /responses — set flag and delegate to super (no nested retry)
         if (response.status === 404 || response.status === 400) {
           this._responsesFallback.set(request.model, true);
           return super.chat(request);
@@ -304,7 +305,7 @@ export class CopilotProvider extends OpenAIChatProvider {
       } catch (error) {
         clearTimeout(timeoutId);
 
-        if (error instanceof ClientError || (error as any)?.name === "AuthError") {
+        if (error instanceof ClientError || error instanceof AuthError) {
           throw error;
         }
 
@@ -317,7 +318,7 @@ export class CopilotProvider extends OpenAIChatProvider {
               error
             );
           }
-          throw new ClientError("timeout", `Network error: ${error.message}`, true, error);
+          throw new ClientError("provider_unavailable", `Network error: ${error.message}`, true, error);
         }
 
         throw error;
@@ -378,7 +379,7 @@ export class CopilotProvider extends OpenAIChatProvider {
           }
         }
       } catch (streamError) {
-        if (streamError instanceof ClientError || (streamError as any)?.name === "AuthError") {
+        if (streamError instanceof ClientError || streamError instanceof AuthError) {
           yield { type: "error", text: (streamError as Error).message };
           return;
         }
@@ -394,7 +395,7 @@ export class CopilotProvider extends OpenAIChatProvider {
     } catch (error) {
       clearTimeout(timeoutId);
 
-      if (error instanceof ClientError || (error as any)?.name === "AuthError") {
+      if (error instanceof ClientError || error instanceof AuthError) {
         throw error;
       }
 

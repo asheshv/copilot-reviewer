@@ -546,7 +546,8 @@ describe("reviewStream()", () => {
 
     const options: ReviewOptions = {
       diff: { mode: "unstaged" },
-      config: { ...mockConfig, prompt: "x".repeat(2000) },
+      // chunking: "never" forces single-pass so checkTokenBudget runs and emits the warning
+      config: { ...mockConfig, prompt: "x".repeat(2000), chunking: "never" },
       model: "mock-model",
     };
 

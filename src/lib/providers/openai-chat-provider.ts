@@ -140,7 +140,7 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
               error
             );
           }
-          throw new ClientError("timeout", `Network error: ${error.message}`, true, error);
+          throw new ClientError("provider_unavailable", `Network error: ${error.message}`, true, error);
         }
 
         throw error;
@@ -166,7 +166,8 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
+      // Do NOT clear the timeout here — keep it active to guard the full SSE stream duration.
+      // The finally block below clears it and aborts the controller on both normal and error paths.
 
       if (!response.ok) {
         await this.handleErrorResponse(response);
@@ -393,7 +394,8 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
     return (
       error.code === "rate_limited" ||
       error.code === "server_error" ||
-      error.code === "timeout"
+      error.code === "timeout" ||
+      error.code === "provider_unavailable"
     );
   }
 

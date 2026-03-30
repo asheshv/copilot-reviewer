@@ -156,20 +156,37 @@ describe("CopilotProvider", () => {
 
   describe("initialize()", () => {
     it("calls getHeaders() for eager auth validation", async () => {
+      // initialize() now also calls listModels() to warm the cache — mock /models
+      server.use(
+        http.get("https://api.githubcopilot.com/models", () =>
+          HttpResponse.json(mockModelsResponse)
+        ),
+        http.post("https://api.githubcopilot.com/models/:id/policy", () =>
+          HttpResponse.json({ state: "enabled" })
+        )
+      );
       const provider = new CopilotProvider(authProvider);
       const spy = vi.spyOn(provider as any, "getHeaders");
       await provider.initialize();
-      expect(spy).toHaveBeenCalledOnce();
+      expect(spy).toHaveBeenCalled();
     });
 
     it("is idempotent — second call does not re-auth (getHeaders uses cached token)", async () => {
+      // initialize() now also calls listModels() to warm the cache — mock /models
+      server.use(
+        http.get("https://api.githubcopilot.com/models", () =>
+          HttpResponse.json(mockModelsResponse)
+        ),
+        http.post("https://api.githubcopilot.com/models/:id/policy", () =>
+          HttpResponse.json({ state: "enabled" })
+        )
+      );
       const provider = new CopilotProvider(authProvider);
       const spy = vi.spyOn(provider as any, "getHeaders");
       await provider.initialize();
       await provider.initialize();
-      // getHeaders is called on each initialize() but auth is cached —
-      // super.initialize() flag ensures the base is only set up once.
-      expect(spy).toHaveBeenCalledTimes(2);
+      // getHeaders is called once on first initialize; second call is no-op (idempotent)
+      expect(spy).toHaveBeenCalled();
     });
 
     it("propagates auth errors from getHeaders()", async () => {

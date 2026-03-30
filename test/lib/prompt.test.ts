@@ -519,6 +519,35 @@ describe("assembleReduceMessage", () => {
     expect(allFilesIdx).toBeGreaterThan(chunk1Idx);
   });
 
+  it("empty-content chunk produces 'No issues found' placeholder instead of empty section", () => {
+    const chunkFindings = [
+      { files: ["a.ts"], content: "Found something." },
+      { files: ["b.ts"], content: "" },
+      { files: ["c.ts"], content: "   " },
+    ];
+    const allFiles: FileChange[] = [
+      { path: "a.ts", status: "modified", insertions: 1, deletions: 0 },
+      { path: "b.ts", status: "added", insertions: 3, deletions: 0 },
+      { path: "c.ts", status: "modified", insertions: 2, deletions: 1 },
+    ];
+
+    const msg = assembleReduceMessage(chunkFindings, allFiles, new Map());
+
+    expect(msg).toContain("## Chunk 1 (files: a.ts)");
+    expect(msg).toContain("Found something.");
+    expect(msg).toContain("## Chunk 2 (files: b.ts)");
+    expect(msg).toContain("No issues found in this chunk.");
+    expect(msg).toContain("## Chunk 3 (files: c.ts)");
+    // Both empty and whitespace-only content chunks get the placeholder
+    const chunk2Idx = msg.indexOf("## Chunk 2 (files: b.ts)");
+    const chunk3Idx = msg.indexOf("## Chunk 3 (files: c.ts)");
+    const noIssuesCount = (msg.match(/No issues found in this chunk\./g) ?? []).length;
+    expect(noIssuesCount).toBe(2);
+    // The empty-content chunks must NOT produce adjacent ## headers
+    const chunk2Section = msg.slice(chunk2Idx, chunk3Idx);
+    expect(chunk2Section).toContain("No issues found in this chunk.");
+  });
+
   it("handles a single chunk correctly", () => {
     const chunkFindings = [
       { files: ["solo.ts"], content: "Only finding" },

@@ -222,6 +222,18 @@ index abc..000
     expect(segments[0].hunks[0].startLine).toBe(0);
   });
 
+  it("empty string → returns empty segments array", () => {
+    const { segments, warnings } = splitDiffByFile("");
+    expect(segments).toHaveLength(0);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("whitespace-only string → returns empty segments array", () => {
+    const { segments, warnings } = splitDiffByFile("   \n\t  ");
+    expect(segments).toHaveLength(0);
+    expect(warnings).toHaveLength(0);
+  });
+
   it("hunk header with omitted count (@@ -1 +1 @@) treated as count=1", () => {
     const singleLineDiff = `diff --git a/src/single.ts b/src/single.ts
 index abc..def 100644

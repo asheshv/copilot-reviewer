@@ -200,6 +200,32 @@ describe("truncateForReduce", () => {
     expect(output).toContain("criticalcritical"); // some of the HIGH body
   });
 
+  it("Round 4: post-HIGH MEDIUM block is NOT preserved (HIGH latch resets on MEDIUM marker)", () => {
+    // Layout: MEDIUM ... HIGH ... MEDIUM
+    // The second MEDIUM must NOT be absorbed into highLines
+    const preMedium  = "### MEDIUM\n" + "before".repeat(30) + "\n";
+    const highBlock  = "### HIGH\n"   + "critical".repeat(20) + "\n";
+    const postMedium = "### MEDIUM\n" + "after".repeat(30) + "\n";
+    const chunk = preMedium + highBlock + postMedium;
+
+    // Budget tight enough to force round 4 but large enough to hold HIGH alone
+    const budget = Math.ceil(highBlock.length / 4) + 5;
+
+    const result = truncateForReduce([chunk], budget);
+    expect(result.didTruncate).toBe(true);
+
+    const output = result.truncated[0];
+    // HIGH content must be fully preserved
+    expect(output).toContain("### HIGH");
+    expect(output).toContain("criticalcritical");
+
+    // The post-HIGH MEDIUM block must NOT be fully preserved in the output
+    // (it may be partially present due to proportional truncation of otherLines,
+    // but the full postMedium body should not appear intact alongside HIGH)
+    // Specifically, "after" repeated 30 times should not be in the output
+    expect(output).not.toContain("after".repeat(30));
+  });
+
   it("returns warnings describing what was done", () => {
     const lowBlock = makeFinding("LOW", "Nitpick", "z".repeat(600));
     const findings = [lowBlock, lowBlock];
