@@ -79,6 +79,10 @@ All test files containing hardcoded references to:
 - `copilot_review` / `copilot_chat` / `copilot_models` (MCP tool names)
 - `"Free-form Copilot chat"` (tool descriptions)
 - `"Review code changes using GitHub Copilot"` (tool descriptions)
+- `"Copilot returned no findings."` (warning message)
+- `CopilotReviewError` (base error class)
+- `COPILOT_REVIEW_MAX_DIFF_SIZE` (env var in diff.test.ts)
+- Test descriptions containing "Copilot" that reference the tool (e.g., `"passes through Copilot content as-is"` → `"passes through LLM content as-is"`)
 
 ### Config
 
