@@ -56,7 +56,7 @@ function formatMarkdown(result: ReviewResult): string {
     chunkSuffix = ` | **Chunks:** ${result.chunks.length}${unaggregated}`;
   }
 
-  const header = `# Copilot Code Review
+  const header = `# LLM Code Review
 
 **Model:** ${model} | **Files:** ${filesChanged} | **+${insertions} -${deletions}**${chunkSuffix}
 
@@ -85,7 +85,7 @@ function formatText(result: ReviewResult): string {
     chunkSuffix = ` | Chunks: ${result.chunks.length}${unaggregated}`;
   }
 
-  const header = `Copilot Code Review
+  const header = `LLM Code Review
 Model: ${model} | Files: ${filesChanged} | +${insertions} -${deletions}${chunkSuffix}
 
 `;

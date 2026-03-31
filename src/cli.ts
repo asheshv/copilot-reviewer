@@ -22,14 +22,14 @@ import type { StatusOutput } from "./lib/types.js";
 import { review, reviewStream } from "./lib/review.js";
 import { detectHighSeverity, formatNdjsonChunk } from "./lib/formatter.js";
 
-const VERSION = "0.1.0";
+const VERSION = "1.0.0";
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
 function isVerbose(explicitFlag: boolean): boolean {
-  return explicitFlag || process.env.DEBUG === "copilot-review";
+  return explicitFlag || process.env.DEBUG === "llm-review";
 }
 
 function progress(msg: string): void {
@@ -594,9 +594,9 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
 
 export function buildProgram(): Command {
   const program = new Command()
-    .name("copilot-review")
+    .name("llm-review")
     .version(VERSION)
-    .description("Review code changes using GitHub Copilot")
+    .description("Review code changes using LLMs")
     .enablePositionalOptions()
     .argument("[mode]", "Diff mode: unstaged|staged|local|branch|pr|commits|range", "local")
     .argument("[modeArg]", "Mode argument (base branch, PR number, etc.)")
@@ -630,7 +630,7 @@ export function buildProgram(): Command {
 
   program
     .command("chat <message>")
-    .description("Chat with Copilot")
+    .description("Chat with LLM")
     .action(async (message: string) => {
       const code = await handleChat(message);
       process.exit(code);
@@ -674,8 +674,8 @@ const scriptPath = process.argv[1] ?? "";
 const isEntryPoint =
   scriptPath.endsWith("/cli.js") ||
   scriptPath.endsWith("/cli.ts") ||
-  scriptPath.endsWith("/copilot-review") ||
-  scriptPath.endsWith("/.bin/copilot-review");
+  scriptPath.endsWith("/llm-review") ||
+  scriptPath.endsWith("/.bin/llm-review");
 
 if (isEntryPoint) {
   main().catch((err) => {

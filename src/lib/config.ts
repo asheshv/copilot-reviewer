@@ -57,7 +57,7 @@ function getProjectConfigDir(gitRoot: string): string {
  *
  * Layer precedence (lowest to highest):
  * 1. Built-in defaults
- * 2. Environment variables (CODEREVIEWER_*)
+ * 2. Environment variables (LLM_REVIEWER_*)
  * 3. Global config (~/.llm-reviewer/)
  * 4. Project config (<git-root>/.llm-reviewer/ or --config path)
  * 5. CLI overrides
@@ -80,7 +80,7 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
   let currentMode: "extend" | "replace" = "extend";
 
   // Layer 2: Environment variables
-  const envProvider = process.env["CODEREVIEWER_PROVIDER"];
+  const envProvider = process.env["LLM_REVIEWER_PROVIDER"];
   if (envProvider !== undefined) {
     // Not validated here to avoid importing availableProviders() and risking circular
     // dependencies. createProvider() will throw a ConfigError with a clear message if the
@@ -88,22 +88,22 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     config.provider = envProvider;
   }
 
-  const envOllamaUrl = process.env["CODEREVIEWER_OLLAMA_URL"];
+  const envOllamaUrl = process.env["LLM_REVIEWER_OLLAMA_URL"];
   if (envOllamaUrl !== undefined) {
-    validateUrl(envOllamaUrl, "CODEREVIEWER_OLLAMA_URL");
+    validateUrl(envOllamaUrl, "LLM_REVIEWER_OLLAMA_URL");
     config.providerOptions = {
       ...config.providerOptions,
       ollama: { baseUrl: envOllamaUrl },
     };
   }
 
-  const envChunking = process.env["CODEREVIEWER_CHUNKING"];
+  const envChunking = process.env["LLM_REVIEWER_CHUNKING"];
   if (envChunking !== undefined) {
     if (envChunking !== "auto" && envChunking !== "always" && envChunking !== "never") {
       throw new ConfigError(
         "invalid_chunking",
-        `Invalid CODEREVIEWER_CHUNKING value: "${envChunking}". Must be "auto", "always", or "never".`,
-        "CODEREVIEWER_CHUNKING",
+        `Invalid LLM_REVIEWER_CHUNKING value: "${envChunking}". Must be "auto", "always", or "never".`,
+        "LLM_REVIEWER_CHUNKING",
         false
       );
     }
@@ -310,7 +310,7 @@ async function loadConfigLayer(
  */
 async function resolvePrompt(value: string, configDir: string): Promise<string> {
   // Security: absolute paths are NEVER allowed in prompt field
-  // (prevents reading arbitrary files via malicious .copilot-review/config.json committed to a repo)
+  // (prevents reading arbitrary files via malicious .llm-reviewer/config.json committed to a repo)
   if (isAbsolute(value)) {
     throw new ConfigError(
       "prompt_not_found",

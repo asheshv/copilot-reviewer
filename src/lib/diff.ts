@@ -150,8 +150,8 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
 
   // Check size limit
   let maxSize = DEFAULT_MAX_DIFF_SIZE;
-  if (process.env.COPILOT_REVIEW_MAX_DIFF_SIZE) {
-    const parsed = parseInt(process.env.COPILOT_REVIEW_MAX_DIFF_SIZE, 10);
+  if (process.env.LLM_REVIEWER_MAX_DIFF_SIZE) {
+    const parsed = parseInt(process.env.LLM_REVIEWER_MAX_DIFF_SIZE, 10);
     if (!isNaN(parsed) && parsed > 0) {
       maxSize = parsed;
     }
@@ -160,7 +160,7 @@ export async function collectDiff(options: DiffOptions): Promise<DiffResult> {
   if (stdout.length > maxSize) {
     throw new DiffError(
       "diff_too_large",
-      `Diff is too large (${stdout.length} bytes, max ${maxSize} bytes). Use ignorePaths, a smaller diff mode, or increase COPILOT_REVIEW_MAX_DIFF_SIZE.`,
+      `Diff is too large (${stdout.length} bytes, max ${maxSize} bytes). Use ignorePaths, a smaller diff mode, or increase LLM_REVIEWER_MAX_DIFF_SIZE.`,
       false
     );
   }

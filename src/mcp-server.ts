@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
-  CopilotReviewError,
+  LlmReviewError,
   ParameterError,
   type ReviewOptions,
   type DiffOptions,
@@ -81,7 +81,7 @@ export function validateReviewParams(params: Record<string, unknown>): void {
 // ============================================================================
 
 function mapErrorToToolResult(err: unknown): CallToolResult {
-  if (err instanceof CopilotReviewError) {
+  if (err instanceof LlmReviewError) {
     const result: Record<string, unknown> = {
       error: err.code,
       message: err.message,
@@ -264,14 +264,14 @@ export async function handleModels(): Promise<CallToolResult> {
 
 export function createMcpServer(): McpServer {
   const server = new McpServer(
-    { name: "copilot-reviewer", version: "0.1.0" },
+    { name: "llm-reviewer", version: "1.0.0" },
     { capabilities: { tools: {} } },
   );
 
-  // copilot_review tool
+  // llm_review tool
   server.tool(
-    "copilot_review",
-    "Review code changes using GitHub Copilot",
+    "llm_review",
+    "Review code changes using LLMs",
     {
       mode: z.enum(["unstaged", "staged", "local", "branch", "pr", "commits", "range"])
         .describe("Diff mode"),
@@ -287,10 +287,10 @@ export function createMcpServer(): McpServer {
     },
   );
 
-  // copilot_chat tool
+  // llm_chat tool
   server.tool(
-    "copilot_chat",
-    "Chat with GitHub Copilot about code",
+    "llm_chat",
+    "Chat with LLM about code",
     {
       message: z.string().describe("User's question"),
       context: z.string().optional().describe("Code/file content to include as context"),
@@ -301,10 +301,10 @@ export function createMcpServer(): McpServer {
     },
   );
 
-  // copilot_models tool
+  // llm_models tool
   server.tool(
-    "copilot_models",
-    "List available GitHub Copilot models",
+    "llm_models",
+    "List available LLM models",
     {},
     async () => {
       return await handleModels();

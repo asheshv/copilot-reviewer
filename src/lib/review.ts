@@ -99,7 +99,7 @@ async function singlePassReview(
 
   // Handle empty response
   if (!chatResponse.content) {
-    warnings.push("Copilot returned no findings.");
+    warnings.push("Provider returned no findings.");
   }
 
   const reviewResult: ReviewResult = {

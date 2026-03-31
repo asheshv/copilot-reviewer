@@ -1,10 +1,10 @@
 // src/lib/types.ts
 
 /**
- * Base error class for all copilot-reviewer errors.
+ * Base error class for all llm-reviewer errors.
  * Extends Error with code, recoverable flag, and optional cause.
  */
-export class CopilotReviewError extends Error {
+export class LlmReviewError extends Error {
   code: string;
   recoverable: boolean;
   cause?: Error;
@@ -14,14 +14,14 @@ export class CopilotReviewError extends Error {
     this.code = code;
     this.recoverable = recoverable;
     this.cause = cause;
-    this.name = "CopilotReviewError";
+    this.name = "LlmReviewError";
   }
 }
 
 /**
  * Authentication-related errors (e.g., missing token, expired credentials).
  */
-export class AuthError extends CopilotReviewError {
+export class AuthError extends LlmReviewError {
   authorizeUrl?: string;
 
   constructor(code: string, message: string, recoverable: boolean, cause?: Error) {
@@ -33,7 +33,7 @@ export class AuthError extends CopilotReviewError {
 /**
  * Diff generation errors (e.g., empty diff, no repository).
  */
-export class DiffError extends CopilotReviewError {
+export class DiffError extends LlmReviewError {
   constructor(code: string, message: string, recoverable = false, cause?: Error) {
     super(code, message, recoverable, cause);
     this.name = "DiffError";
@@ -43,7 +43,7 @@ export class DiffError extends CopilotReviewError {
 /**
  * HTTP client errors (e.g., rate limiting, network failures).
  */
-export class ClientError extends CopilotReviewError {
+export class ClientError extends LlmReviewError {
   status?: number;
   retryAfter?: number;
 
@@ -56,7 +56,7 @@ export class ClientError extends CopilotReviewError {
 /**
  * Configuration file errors (e.g., malformed JSON, invalid values).
  */
-export class ConfigError extends CopilotReviewError {
+export class ConfigError extends LlmReviewError {
   filePath: string;
 
   constructor(code: string, message: string, filePath: string, recoverable = false, cause?: Error) {
@@ -69,7 +69,7 @@ export class ConfigError extends CopilotReviewError {
 /**
  * Model-related errors (e.g., model not found, unsupported model).
  */
-export class ModelError extends CopilotReviewError {
+export class ModelError extends LlmReviewError {
   available?: string[];
 
   constructor(code: string, message: string, recoverable: boolean, cause?: Error) {
@@ -81,7 +81,7 @@ export class ModelError extends CopilotReviewError {
 /**
  * Review orchestration errors (e.g., diff too large, no findings).
  */
-export class ReviewError extends CopilotReviewError {
+export class ReviewError extends LlmReviewError {
   suggestion?: string;
 
   constructor(code: string, message: string, recoverable: boolean, cause?: Error) {
@@ -93,7 +93,7 @@ export class ReviewError extends CopilotReviewError {
 /**
  * CLI parameter validation errors (e.g., missing required parameter, conflicting options).
  */
-export class ParameterError extends CopilotReviewError {
+export class ParameterError extends LlmReviewError {
   constructor(code: string, message: string, recoverable = false, cause?: Error) {
     super(code, message, recoverable, cause);
     this.name = "ParameterError";

@@ -75,8 +75,8 @@ export class CopilotProvider extends OpenAIChatProvider {
     const authHeaders = await this.auth.getAuthenticatedHeaders();
     return {
       ...authHeaders,
-      "Editor-Version": "copilot-reviewer/0.1.0",
-      "Editor-Plugin-Version": "copilot-reviewer/0.1.0",
+      "Editor-Version": "llm-reviewer/1.0.0",
+      "Editor-Plugin-Version": "llm-reviewer/1.0.0",
       "Copilot-Integration-Id": "vscode-chat",
       "x-github-api-version": "2025-10-01",
     };
