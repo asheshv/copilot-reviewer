@@ -177,7 +177,7 @@ git remote set-url origin git@github.com:asheshv/llm-reviewer.git
 ### Steps
 
 1. Remove fallback logic in `config.ts` (the one logic change)
-2. Apply replacement rules 1-12 across source files
+2. Apply all replacement rules (1-18) across source files
 3. Apply replacement rules across test files
 4. Rename `.copilot-review/` directory to `.llm-reviewer/`
 5. Apply replacement rules across all `docs/` markdown files
