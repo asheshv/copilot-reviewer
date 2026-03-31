@@ -192,7 +192,7 @@ function applyRound1(chunks: string[]): { chunks: string[]; lowOmitted: number; 
     chunksAffected++;
 
     const kept = blocks.filter(b => b.severity !== "LOW");
-    const placeholder = `[${lowBlocks.length} LOW findings omitted]`;
+    const placeholder = `[${lowBlocks.length} LOW sections omitted]`;
     kept.push({ severity: "LOW", text: placeholder });
     return joinBlocks(kept);
   });
@@ -380,7 +380,7 @@ export function truncateForReduce(
   if (r1.lowOmitted > 0) {
     current = r1.chunks;
     warnings.push(
-      `Reduce pass: truncated LOW findings (${r1.lowOmitted} omitted across ${r1.chunksAffected} chunks)`
+      `Reduce pass: truncated LOW sections (${r1.lowOmitted} omitted across ${r1.chunksAffected} chunks)`
     );
     if (totalTokens(current) <= availableBudget) {
       return { truncated: current, warnings, didTruncate: true };

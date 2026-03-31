@@ -314,11 +314,19 @@ async function loadConfigLayer(
     if (error instanceof ConfigError) {
       throw error;
     }
-    // ENOENT is ok (layer doesn't exist), but other errors should be thrown
-    if ((error as any).code !== "ENOENT") {
+    if ((error as any).code === "ENOENT") {
+      // Layer doesn't exist — that's fine
+    } else if ((error as any).code === "EACCES") {
+      throw new ConfigError(
+        "config_read_error",
+        `Permission denied reading config: ${jsonPath}`,
+        jsonPath,
+        false,
+        error as Error
+      );
+    } else {
       throw error;
     }
-    // ENOENT is ok, layer just doesn't exist
   }
 
   // If config.json doesn't have a prompt, try config.md

@@ -117,7 +117,7 @@ describe("truncateForReduce", () => {
     expect(result.didTruncate).toBe(true);
     expect(result.truncated[0]).toContain("### HIGH");
     expect(result.truncated[0]).not.toContain("Nitpick 1");
-    expect(result.truncated[0]).toContain("LOW findings omitted");
+    expect(result.truncated[0]).toContain("LOW sections omitted");
     expect(result.warnings.some(w => w.includes("LOW"))).toBe(true);
   });
 

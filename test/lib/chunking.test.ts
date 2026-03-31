@@ -145,9 +145,9 @@ describe("splitDiffByFile", () => {
     }
   });
 
-  it("estimatedTokens = raw.length / 4", () => {
+  it("estimatedTokens = ceil(raw.length / 4)", () => {
     const { segments } = splitDiffByFile(SINGLE_FILE_DIFF);
-    expect(segments[0].estimatedTokens).toBe(Math.floor(segments[0].raw.length / 4));
+    expect(segments[0].estimatedTokens).toBe(Math.ceil(segments[0].raw.length / 4));
   });
 
   it("single file diff → one segment", () => {
@@ -378,7 +378,7 @@ describe("binPackFiles", () => {
     const bigSegment: FileSegment = {
       path: "big.ts",
       raw,
-      estimatedTokens: Math.floor(raw.length / 4),
+      estimatedTokens: Math.ceil(raw.length / 4),
       hunks: [hunk1, hunk2],
     };
 
@@ -402,7 +402,7 @@ describe("splitFileByHunks", () => {
       header,
       raw,
       startLine,
-      estimatedTokens: Math.floor(raw.length / 4),
+      estimatedTokens: Math.ceil(raw.length / 4),
     };
   }
 
@@ -491,7 +491,7 @@ describe("splitFileByHunks", () => {
     const segment: FileSegment = {
       path: "src/empty.ts",
       raw,
-      estimatedTokens: Math.floor(raw.length / 4),
+      estimatedTokens: Math.ceil(raw.length / 4),
       hunks: [],
     };
 

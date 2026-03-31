@@ -281,7 +281,7 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
       content: message.content,
       model: json.model || "unknown",
       usage: {
-        totalTokens: json.usage?.total_tokens || 0,
+        totalTokens: json.usage?.total_tokens ?? 0,
       },
     };
   }

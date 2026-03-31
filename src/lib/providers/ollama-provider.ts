@@ -243,14 +243,6 @@ export class OllamaProvider extends OpenAIChatProvider {
   }
 
   /**
-   * Retry on provider_unavailable in addition to base retryable codes.
-   * Handles ECONNREFUSED during Ollama startup.
-   */
-  protected override shouldRetry(error: ClientError): boolean {
-    return super.shouldRetry(error) || error.code === "provider_unavailable";
-  }
-
-  /**
    * No-op — stateless provider.
    */
   override dispose(): void {

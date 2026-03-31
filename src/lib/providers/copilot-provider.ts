@@ -516,7 +516,7 @@ export class CopilotProvider extends OpenAIChatProvider {
     return {
       content: contentParts.join(""),
       model: response.model || "unknown",
-      usage: { totalTokens: response.usage?.total_tokens || 0 },
+      usage: { totalTokens: response.usage?.total_tokens ?? 0 },
     };
   }
 
@@ -530,21 +530,36 @@ export class CopilotProvider extends OpenAIChatProvider {
 
   private async _enablePolicy(id: string): Promise<void> {
     const headers = await this._buildRequestHeaders();
-    const response = await fetch(`${this.baseUrl}/models/${id}/policy`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ state: "enabled" }),
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-    if (!response.ok) {
+    try {
+      const response = await fetch(`${this.baseUrl}/models/${id}/policy`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ state: "enabled" }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        console.error(
+          `Failed to enable policy for model ${id}: ${response.status} ${response.statusText}`
+        );
+      }
+    } catch (err) {
+      clearTimeout(timeoutId);
       console.error(
-        `Failed to enable policy for model ${id}: ${response.status} ${response.statusText}`
+        `Failed to enable policy for model ${id}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
 
   /**
-   * Deduplicate models by name, keeping the highest version (lexicographic desc sort).
+   * Deduplicate models by name, keeping the highest version (descending sort).
+   * Uses numeric-aware semver comparison; falls back to localeCompare for
+   * non-numeric segments.
    */
   private _deduplicateByVersion(models: RawModelData[]): RawModelData[] {
     const grouped = new Map<string, RawModelData[]>();
@@ -557,11 +572,38 @@ export class CopilotProvider extends OpenAIChatProvider {
 
     const result: RawModelData[] = [];
     for (const [, group] of grouped) {
-      group.sort((a, b) => b.version.localeCompare(a.version));
+      group.sort((a, b) => CopilotProvider._compareVersions(b.version, a.version));
       result.push(group[0]);
     }
 
     return result;
+  }
+
+  /**
+   * Numeric-aware version comparison. Splits on dots and compares each segment
+   * numerically when both are valid integers; falls back to localeCompare otherwise.
+   * Returns negative if a < b, positive if a > b, zero if equal.
+   */
+  private static _compareVersions(a: string, b: string): number {
+    const aParts = a.split(".");
+    const bParts = b.split(".");
+    const len = Math.max(aParts.length, bParts.length);
+
+    for (let i = 0; i < len; i++) {
+      const aRaw = aParts[i] ?? "0";
+      const bRaw = bParts[i] ?? "0";
+      const aNum = Number(aRaw);
+      const bNum = Number(bRaw);
+
+      if (Number.isInteger(aNum) && Number.isInteger(bNum)) {
+        if (aNum !== bNum) return aNum - bNum;
+      } else {
+        const cmp = aRaw.localeCompare(bRaw);
+        if (cmp !== 0) return cmp;
+      }
+    }
+
+    return 0;
   }
 
   /**

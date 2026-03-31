@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import type { DiffResult, FileChange } from "./types.js";
-import type { FileSegment } from "./chunking.js";
+import { parseHunkHeader, type FileSegment } from "./chunking.js";
 
 /**
  * Load the built-in default review prompt from prompts/default-review.md.
@@ -70,15 +70,10 @@ function assembleSimpleFileManifest(files: FileChange[]): string {
 // extractHunkRanges
 // ============================================================================
 
-/**
- * Parses the new-file line count from a hunk header.
- * From "@@ -a,b +c,d @@", extracts d (defaults to 1 if omitted).
- */
+/** Extracts new-file line count from a hunk header via shared parseHunkHeader. */
 function parseHunkLineCount(header: string): number {
-  const match = header.match(/^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,(\d+))?\s+@@/);
-  if (!match) return 1;
-  // match[1] is the captured d value; undefined means count was omitted → 1
-  return match[1] !== undefined ? parseInt(match[1], 10) : 1;
+  const parsed = parseHunkHeader(header);
+  return parsed ? parsed.lineCount : 1;
 }
 
 /**

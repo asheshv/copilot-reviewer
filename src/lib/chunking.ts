@@ -8,7 +8,7 @@ import { ReviewError } from "./types.js";
 export interface FileSegment {
   path: string;
   raw: string;
-  estimatedTokens: number; // Math.floor(raw.length / 4)
+  estimatedTokens: number; // Math.ceil(raw.length / 4)
   hunks: HunkSegment[];
 }
 
@@ -31,13 +31,15 @@ export interface SplitResult {
 /**
  * Parses a unified diff hunk header line.
  * Handles: @@ -a,b +c,d @@, @@ -a +c @@, @@ -0,0 +1,N @@, @@ -1,N +0,0 @@
- * Returns startLine (the +c value) or null if the header is malformed.
+ * Returns startLine (+c) and lineCount (+d, defaults to 1) or null if malformed.
  */
-function parseHunkHeader(line: string): number | null {
-  // Match @@ -oldStart[,oldCount] +newStart[,newCount] @@
-  const match = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+export function parseHunkHeader(line: string): { startLine: number; lineCount: number } | null {
+  const match = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@/);
   if (!match) return null;
-  return parseInt(match[1], 10);
+  return {
+    startLine: parseInt(match[1], 10),
+    lineCount: match[2] !== undefined ? parseInt(match[2], 10) : 1,
+  };
 }
 
 // ============================================================================
@@ -68,7 +70,7 @@ export function splitDiffByFile(rawDiff: string): SplitResult {
     segments.push({
       path: "unknown",
       raw,
-      estimatedTokens: Math.floor(raw.length / 4),
+      estimatedTokens: Math.ceil(raw.length / 4),
       hunks,
     });
     return { segments, warnings };
@@ -98,7 +100,7 @@ export function splitDiffByFile(rawDiff: string): SplitResult {
     segments.push({
       path,
       raw: section,
-      estimatedTokens: Math.floor(section.length / 4),
+      estimatedTokens: Math.ceil(section.length / 4),
       hunks,
     });
   }
@@ -121,7 +123,6 @@ function parseHunks(
   let currentHunkLines: string[] = [];
   let currentHeader: string | null = null;
   let currentStartLine = 0;
-  let hasHunkHeaders = false;
   let hasMalformed = false;
 
   const flushHunk = () => {
@@ -131,7 +132,7 @@ function parseHunks(
         header: currentHeader,
         raw,
         startLine: currentStartLine,
-        estimatedTokens: Math.floor(raw.length / 4),
+        estimatedTokens: Math.ceil(raw.length / 4),
       });
     }
     currentHunkLines = [];
@@ -142,12 +143,11 @@ function parseHunks(
   for (const line of lines) {
     if (line.startsWith("@@")) {
       // Try to parse as valid hunk header
-      const startLine = parseHunkHeader(line);
-      if (startLine !== null) {
+      const parsed = parseHunkHeader(line);
+      if (parsed !== null) {
         flushHunk();
-        hasHunkHeaders = true;
         currentHeader = line;
-        currentStartLine = startLine;
+        currentStartLine = parsed.startLine;
         currentHunkLines = [line];
       } else {
         // Malformed hunk header
@@ -165,11 +165,8 @@ function parseHunks(
 
   flushHunk();
 
-  if (hasMalformed && !hasHunkHeaders) {
-    // All hunk headers were malformed — warn
-    warnings.push(`Malformed hunk header(s) in ${path}`);
-  } else if (hasMalformed) {
-    warnings.push(`Malformed hunk header(s) in ${path}`);
+  if (hasMalformed) {
+    warnings.push(`Malformed hunk header in ${path}; content included as-is`);
   }
 
   return hunks;
@@ -378,6 +375,6 @@ function truncateHunk(hunk: HunkSegment, chunkBudget: number): HunkSegment {
     header: hunk.header,
     raw: finalRaw,
     startLine: hunk.startLine,
-    estimatedTokens: Math.floor(finalRaw.length / 4),
+    estimatedTokens: Math.ceil(finalRaw.length / 4),
   };
 }
