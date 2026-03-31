@@ -87,7 +87,7 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json")) {
           return;
         }
         throw createENOENT();
@@ -95,7 +95,7 @@ describe("loadConfig", () => {
 
       mockReadFile.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json")) {
           return globalConfig as any;
         }
         throw createENOENT();
@@ -189,18 +189,18 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        // Only the old .copilot-review paths exist (no .code-reviewer)
-        if (pathStr.includes(".copilot-review/config.json")) {
+        // Only the .llm-reviewer paths exist
+        if (pathStr.includes(".llm-reviewer/config.json")) {
           return;
         }
         throw createENOENT();
       });
 
       mockReadFile.mockImplementation(async (path: any) => {
-        if (path.includes("/home/user/.copilot-review/config.json")) {
+        if (path.includes("/home/user/.llm-reviewer/config.json")) {
           return globalJson;
         }
-        if (path.includes("/project/.copilot-review/config.json")) {
+        if (path.includes("/project/.llm-reviewer/config.json")) {
           return projectJson;
         }
         if (path.includes("config.md")) {
@@ -220,14 +220,14 @@ describe("loadConfig", () => {
       const globalJson = '{ "model": "gpt-4.1" }';
 
       mockAccess.mockImplementation(async (path: any) => {
-        if (path.includes("/home/user/.copilot-review/config.json")) {
+        if (path.includes("/home/user/.llm-reviewer/config.json")) {
           return;
         }
         throw createENOENT();
       });
 
       mockReadFile.mockImplementation(async (path: any) => {
-        if (path.includes("/home/user/.copilot-review/config.json")) {
+        if (path.includes("/home/user/.llm-reviewer/config.json")) {
           return globalJson;
         }
         throw createENOENT();
@@ -294,20 +294,20 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json") || pathStr.includes(".copilot-review/config.md")) {
+        if (pathStr.includes(".llm-reviewer/config.json") || pathStr.includes(".llm-reviewer/config.md")) {
           return;
         }
         throw createENOENT();
       });
 
       mockReadFile.mockImplementation(async (path: any) => {
-        if (path.includes("/home/user/.copilot-review/config.json")) {
+        if (path.includes("/home/user/.llm-reviewer/config.json")) {
           return globalJson;
         }
-        if (path.includes("/project/.copilot-review/config.json")) {
+        if (path.includes("/project/.llm-reviewer/config.json")) {
           return projectExtendJson;
         }
-        if (path.includes("/project/.copilot-review/config.md")) {
+        if (path.includes("/project/.llm-reviewer/config.md")) {
           return projectMd;
         }
         throw createENOENT();
@@ -330,20 +330,20 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json") || pathStr.includes(".copilot-review/config.md")) {
+        if (pathStr.includes(".llm-reviewer/config.json") || pathStr.includes(".llm-reviewer/config.md")) {
           return;
         }
         throw createENOENT();
       });
 
       mockReadFile.mockImplementation(async (path: any) => {
-        if (path.includes("/home/user/.copilot-review/config.json")) {
+        if (path.includes("/home/user/.llm-reviewer/config.json")) {
           return globalJson;
         }
-        if (path.includes("/project/.copilot-review/config.json")) {
+        if (path.includes("/project/.llm-reviewer/config.json")) {
           return projectJson;
         }
-        if (path.includes("/project/.copilot-review/config.md")) {
+        if (path.includes("/project/.llm-reviewer/config.md")) {
           return projectMd;
         }
         throw createENOENT();
@@ -365,17 +365,17 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json")) {
           return;
         }
         throw createENOENT();
       });
 
       mockReadFile.mockImplementation(async (path: any) => {
-        if (path.includes("/home/user/.copilot-review/config.json")) {
+        if (path.includes("/home/user/.llm-reviewer/config.json")) {
           return globalJson;
         }
-        if (path.includes("/project/.copilot-review/config.json")) {
+        if (path.includes("/project/.llm-reviewer/config.json")) {
           return projectJson;
         }
         throw createENOENT();
@@ -433,7 +433,7 @@ describe("loadConfig", () => {
 
       // Override homedir to point to test fixtures
       const fixturesPath = new URL("../fixtures/configs/path-prompt", import.meta.url).pathname;
-      mockHomedir.mockReturnValue(fixturesPath.replace("/.copilot-review", ""));
+      mockHomedir.mockReturnValue(fixturesPath.replace("/.llm-reviewer", ""));
 
       const config = await loadConfig();
 
@@ -545,14 +545,14 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json") || pathStr.includes("/custom/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json") || pathStr.includes("/custom/config.json")) {
           return;
         }
         throw createENOENT();
       });
 
       mockReadFile.mockImplementation(async (path: any) => {
-        if (path.includes("/home/user/.copilot-review/config.json")) {
+        if (path.includes("/home/user/.llm-reviewer/config.json")) {
           return globalJson;
         }
         if (path.includes("/custom/config.json")) {
@@ -574,14 +574,14 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json") || pathStr.includes("/custom/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json") || pathStr.includes("/custom/config.json")) {
           return;
         }
         throw createENOENT();
       });
 
       mockReadFile.mockImplementation(async (path: any) => {
-        if (path.includes("/home/user/.copilot-review/config.json")) {
+        if (path.includes("/home/user/.llm-reviewer/config.json")) {
           return globalJson;
         }
         if (path.includes("/custom/config.json")) {
@@ -685,7 +685,7 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json")) {
           return;
         }
         throw createENOENT();
@@ -693,7 +693,7 @@ describe("loadConfig", () => {
 
       mockReadFile.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json")) {
           return globalJson;
         }
         throw createENOENT();
@@ -719,72 +719,13 @@ describe("loadConfig", () => {
   });
 
   describe("config file path resolution", () => {
-    it("prefers ~/.code-reviewer/config.json over ~/.copilot-review/", async () => {
+    it("loads config from ~/.llm-reviewer/", async () => {
       mockGitRoot(null);
-      const newPathJson = '{ "model": "new-path-model" }';
+      const configJson = '{ "model": "llm-reviewer-model" }';
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".code-reviewer/config.json")) {
-          return; // new path exists
-        }
-        throw createENOENT();
-      });
-
-      mockReadFile.mockImplementation(async (path: any) => {
-        const pathStr = String(path);
-        if (pathStr.includes(".code-reviewer/config.json")) {
-          return newPathJson;
-        }
-        throw createENOENT();
-      });
-
-      const config = await loadConfig();
-
-      expect(config.model).toBe("new-path-model");
-    });
-
-    it("falls back silently to ~/.copilot-review/ when ~/.code-reviewer/ missing", async () => {
-      mockGitRoot(null);
-      const oldPathJson = '{ "model": "old-path-model" }';
-
-      mockAccess.mockImplementation(async (path: any) => {
-        const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json")) {
-          return; // old path exists
-        }
-        throw createENOENT();
-      });
-
-      mockReadFile.mockImplementation(async (path: any) => {
-        const pathStr = String(path);
-        if (pathStr.includes(".copilot-review/config.json")) {
-          return oldPathJson;
-        }
-        throw createENOENT();
-      });
-
-      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-
-      const config = await loadConfig();
-
-      expect(config.model).toBe("old-path-model");
-      // No warning when only old path exists
-      expect(stderrSpy).not.toHaveBeenCalledWith(expect.stringContaining("Warning: both"));
-      stderrSpy.mockRestore();
-    });
-
-    it("emits warning to stderr when both ~/.code-reviewer/ and ~/.copilot-review/ exist", async () => {
-      mockGitRoot(null);
-      const newPathJson = '{ "model": "new-path-model" }';
-
-      mockAccess.mockImplementation(async (path: any) => {
-        const pathStr = String(path);
-        // Both exist — new path returns first
-        if (pathStr.includes(".code-reviewer/config.json")) {
-          return;
-        }
-        if (pathStr.includes(".copilot-review/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json")) {
           return;
         }
         throw createENOENT();
@@ -792,21 +733,15 @@ describe("loadConfig", () => {
 
       mockReadFile.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".code-reviewer/config.json")) {
-          return newPathJson;
+        if (pathStr.includes(".llm-reviewer/config.json")) {
+          return configJson;
         }
         throw createENOENT();
       });
 
-      const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-
       const config = await loadConfig();
 
-      expect(config.model).toBe("new-path-model");
-      expect(stderrSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Warning: both ~/.code-reviewer/")
-      );
-      stderrSpy.mockRestore();
+      expect(config.model).toBe("llm-reviewer-model");
     });
   });
 
@@ -817,7 +752,7 @@ describe("loadConfig", () => {
 
       mockAccess.mockImplementation(async (path: any) => {
         const pathStr = String(path);
-        if (pathStr.includes(".code-reviewer/config.json") || pathStr.includes(".copilot-review/config.json")) {
+        if (pathStr.includes(".llm-reviewer/config.json") || pathStr.includes(".llm-reviewer/config.json")) {
           return;
         }
         throw createENOENT();

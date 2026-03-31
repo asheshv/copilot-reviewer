@@ -42,65 +42,14 @@ function validateUrl(urlStr: string, context: string): void {
   }
 }
 
-/** Returns true if dir contains config.json or config.md */
-async function dirHasConfig(dir: string): Promise<boolean> {
-  const jsonPath = join(dir, "config.json");
-  const mdPath = join(dir, "config.md");
-  try { await access(jsonPath); return true; } catch {}
-  try { await access(mdPath); return true; } catch {}
-  return false;
+/** Return the global config directory path. */
+function getGlobalConfigDir(): string {
+  return join(homedir(), ".llm-reviewer");
 }
 
-/**
- * Resolve global config directory: prefer ~/.code-reviewer, fallback to ~/.copilot-review.
- * Emits a one-time warning if both exist.
- */
-async function resolveGlobalConfigDir(): Promise<string> {
-  const home = homedir();
-  const newDir = join(home, ".code-reviewer");
-  const oldDir = join(home, ".copilot-review");
-
-  const newExists = await dirHasConfig(newDir);
-  const oldExists = await dirHasConfig(oldDir);
-
-  if (newExists && oldExists) {
-    process.stderr.write(
-      "Warning: both ~/.code-reviewer/ and ~/.copilot-review/ exist. Using ~/.code-reviewer/. Run 'copilot-review status' for details.\n"
-    );
-    return newDir;
-  }
-
-  if (newExists) {
-    return newDir;
-  }
-
-  // fallback to old path (may also not exist — loadConfigLayer handles that gracefully)
-  return oldDir;
-}
-
-/**
- * Resolve project config directory: prefer <git-root>/.code-reviewer, fallback to .copilot-review.
- * Emits a one-time warning if both exist.
- */
-async function resolveProjectConfigDir(gitRoot: string): Promise<string> {
-  const newDir = join(gitRoot, ".code-reviewer");
-  const oldDir = join(gitRoot, ".copilot-review");
-
-  const newExists = await dirHasConfig(newDir);
-  const oldExists = await dirHasConfig(oldDir);
-
-  if (newExists && oldExists) {
-    process.stderr.write(
-      `Warning: both ${gitRoot}/.code-reviewer/ and ${gitRoot}/.copilot-review/ exist. Using ${gitRoot}/.code-reviewer/. Run 'copilot-review status' for details.\n`
-    );
-    return newDir;
-  }
-
-  if (newExists) {
-    return newDir;
-  }
-
-  return oldDir;
+/** Return the project config directory path under the given git root. */
+function getProjectConfigDir(gitRoot: string): string {
+  return join(gitRoot, ".llm-reviewer");
 }
 
 /**
@@ -109,8 +58,8 @@ async function resolveProjectConfigDir(gitRoot: string): Promise<string> {
  * Layer precedence (lowest to highest):
  * 1. Built-in defaults
  * 2. Environment variables (CODEREVIEWER_*)
- * 3. Global config (~/.code-reviewer/ or ~/.copilot-review/)
- * 4. Project config (<git-root>/.code-reviewer/ or .copilot-review/ or --config path)
+ * 3. Global config (~/.llm-reviewer/)
+ * 4. Project config (<git-root>/.llm-reviewer/ or --config path)
  * 5. CLI overrides
  */
 export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedConfig> {
@@ -162,7 +111,7 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
   }
 
   // Layer 3: Global config
-  const globalDir = await resolveGlobalConfigDir();
+  const globalDir = getGlobalConfigDir();
   const globalLayer = await loadConfigLayer(globalDir);
   config = mergeConfig(config, globalLayer, currentMode, "global");
   if (globalLayer.mode) {
@@ -179,7 +128,7 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     // Auto-detect git root
     const gitRoot = await detectGitRoot();
     if (gitRoot) {
-      projectDir = await resolveProjectConfigDir(gitRoot);
+      projectDir = getProjectConfigDir(gitRoot);
     }
   }
 

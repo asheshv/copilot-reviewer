@@ -359,8 +359,8 @@ export interface StatusOutput {
   stream: boolean;
   format: string;
   config: {
-    global: { path: string; found: boolean; fallback?: string; fallbackFound?: boolean };
-    project: { path: string; found: boolean; fallback?: string; fallbackFound?: boolean };
+    global: { path: string; found: boolean };
+    project: { path: string; found: boolean };
   };
   auth: {
     method: string;     // "env_token" | "copilot_config" | "gh_cli" | "none"

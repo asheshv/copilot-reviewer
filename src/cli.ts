@@ -405,34 +405,16 @@ async function resolveConfigStatus(): Promise<StatusOutput["config"]> {
   const path = await import("path");
 
   const home = os.homedir();
-  const newGlobalDir = path.join(home, ".code-reviewer");
-  const oldGlobalDir = path.join(home, ".copilot-review");
-  const newGlobalPath = path.join(newGlobalDir, "config.json");
-  const oldGlobalPath = path.join(oldGlobalDir, "config.json");
+  const globalPath = path.join(home, ".llm-reviewer", "config.json");
 
   async function fileExists(p: string): Promise<boolean> {
     try { await fs.access(p); return true; } catch { return false; }
   }
 
-  const newGlobalFound = await fileExists(newGlobalPath);
-  const oldGlobalFound = await fileExists(oldGlobalPath);
-
   const globalEntry: StatusOutput["config"]["global"] = {
-    path: newGlobalPath,
-    found: newGlobalFound,
+    path: globalPath,
+    found: await fileExists(globalPath),
   };
-  if (!newGlobalFound && oldGlobalFound) {
-    globalEntry.path = oldGlobalPath;
-    globalEntry.found = true;
-    globalEntry.fallback = oldGlobalPath;
-    globalEntry.fallbackFound = true;
-  } else if (!newGlobalFound) {
-    // Neither exists — report canonical new path
-    globalEntry.path = newGlobalPath;
-    globalEntry.found = false;
-    globalEntry.fallback = oldGlobalPath;
-    globalEntry.fallbackFound = false;
-  }
 
   // Project config: try to detect git root
   let projectEntry: StatusOutput["config"]["project"];
@@ -442,21 +424,8 @@ async function resolveConfigStatus(): Promise<StatusOutput["config"]> {
     const execFileAsync = promisify(execFile);
     const { stdout } = await execFileAsync("git", ["rev-parse", "--show-toplevel"]);
     const gitRoot = stdout.trim();
-    const newProjectPath = path.join(gitRoot, ".code-reviewer", "config.json");
-    const oldProjectPath = path.join(gitRoot, ".copilot-review", "config.json");
-    const newProjectFound = await fileExists(newProjectPath);
-    const oldProjectFound = await fileExists(oldProjectPath);
-
-    projectEntry = { path: newProjectPath, found: newProjectFound };
-    if (!newProjectFound && oldProjectFound) {
-      projectEntry.path = oldProjectPath;
-      projectEntry.found = true;
-      projectEntry.fallback = oldProjectPath;
-      projectEntry.fallbackFound = true;
-    } else if (!newProjectFound) {
-      projectEntry.fallback = oldProjectPath;
-      projectEntry.fallbackFound = false;
-    }
+    const projectPath = path.join(gitRoot, ".llm-reviewer", "config.json");
+    projectEntry = { path: projectPath, found: await fileExists(projectPath) };
   } catch {
     projectEntry = { path: "(not in a git repo)", found: false };
   }
