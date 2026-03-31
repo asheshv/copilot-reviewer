@@ -104,7 +104,7 @@ llm-reviewer local --provider ollama --ollama-url http://remote:11434 --model co
 - `LLM_REVIEWER_OLLAMA_URL` — Ollama URL override
 - `LLM_REVIEWER_CHUNKING` — chunking kill switch
 
-**Config paths:** `~/.llm-reviewer/config.json` (new) with silent fallback to `~/.llm-reviewer/` (old). Warning emitted if both exist.
+**Config paths:** `~/.llm-reviewer/config.json` — single path, no fallback chain.
 
 **Config merge order:** Defaults → env vars → global config → project config → CLI (env vars lose to config files — intentional design).
 
@@ -168,14 +168,9 @@ Tested against real Ollama instance with `qwen2.5-coder:14b` and `qwen2.5-coder:
 
 ## Future Considerations
 
-### Rename: `llm-reviewer` → `llm-reviewer`
+### Rename: completed
 
-With multi-provider support, the "copilot" name no longer reflects the tool's scope. `llm-reviewer` maintains the `-reviewer` suffix pattern while accurately describing what the tool does. This is a cosmetic change that can be done separately — involves updating:
-- `package.json` name and bin
-- Config directory names
-- CLI help text and headers
-- README and documentation
-- npm publish under new name
+The tool was renamed from `copilot-reviewer` to `llm-reviewer` (v1.0.0) to reflect multi-provider support. See `docs/spec/16-rename-llm-reviewer.md` for the full rename spec.
 
 ### Other Future Enhancements (from spec Section 9)
 
