@@ -27,8 +27,12 @@ Rename the tool from `copilot-reviewer` to `llm-reviewer` to reflect multi-provi
 | Env var: chunking | `CODEREVIEWER_CHUNKING` | `LLM_REVIEWER_CHUNKING` |
 | MCP server name | `copilot-reviewer` | `llm-reviewer` |
 | MCP tool names | `copilot_review`, `copilot_chat`, `copilot_models` | `llm_review`, `llm_chat`, `llm_models` |
-| MCP tool descriptions | "Review code changes using GitHub Copilot" | "Review code changes using LLMs" |
+| MCP review tool description | "Review code changes using GitHub Copilot" | "Review code changes using LLMs" |
+| MCP chat tool description | "Chat with GitHub Copilot about code" | "Chat with LLM about code" |
+| MCP models tool description | "List available GitHub Copilot models" | "List available LLM models" |
 | CLI description | "Review code changes using GitHub Copilot" | "Review code changes using LLMs" |
+| CLI chat subcommand description | "Chat with Copilot" | "Chat with LLM" |
+| Warning message | "Copilot returned no findings." | "Provider returned no findings." |
 | Formatter headers | "Copilot Code Review" | "LLM Code Review" |
 | Editor-Version header | `copilot-reviewer/0.1.0` | `llm-reviewer/1.0.0` |
 | Editor-Plugin-Version header | `copilot-reviewer/0.1.0` | `llm-reviewer/1.0.0` |
@@ -36,6 +40,7 @@ Rename the tool from `copilot-reviewer` to `llm-reviewer` to reflect multi-provi
 | Entry point detection | `copilot-review` in argv | `llm-review` in argv |
 | Chat feature description | "Free-form Copilot chat" | "Free-form LLM chat" |
 | Env var: max diff size | `COPILOT_REVIEW_MAX_DIFF_SIZE` | `LLM_REVIEWER_MAX_DIFF_SIZE` |
+| Base error class | `CopilotReviewError` | `LlmReviewError` |
 
 ## What Does NOT Change
 
@@ -56,7 +61,8 @@ Rename the tool from `copilot-reviewer` to `llm-reviewer` to reflect multi-provi
 | `package.json` | name, version, bin, description |
 | `package-lock.json` | regenerated via `npm install` after `package.json` changes |
 | `src/cli.ts` | CLI name, description ("Review code changes using LLMs"), `VERSION` constant, debug env, entry point detection, error messages. **Also simplify `resolveConfigStatus()`** — remove fallback path probing, remove `fallback`/`fallbackFound` properties, report only canonical `~/.llm-reviewer/` path. |
-| `src/lib/types.ts` | JSDoc: "copilot-reviewer" → "llm-reviewer" in base error class comment |
+| `src/lib/types.ts` | JSDoc: "copilot-reviewer" → "llm-reviewer", rename `CopilotReviewError` → `LlmReviewError` class + all subclass `extends` |
+| `src/lib/review.ts` | Warning: "Copilot returned no findings." → "Provider returned no findings." |
 | `src/mcp-server.ts` | server name/version (`llm-reviewer/1.0.0`), tool names (`llm_review`, `llm_chat`, `llm_models`), tool descriptions ("Review code changes using LLMs", "Free-form LLM chat") |
 | `src/lib/config.ts` | config dir paths (single `~/.llm-reviewer/`, no fallback), env var names (`LLM_REVIEWER_*`), warning messages. **Remove the fallback logic** in `resolveGlobalConfigDir()` and `resolveProjectConfigDir()` — simplify to single-path resolution. |
 | `src/lib/formatter.ts` | "Copilot Code Review" → "LLM Code Review" |
@@ -154,10 +160,15 @@ git remote set-url origin git@github.com:asheshv/llm-reviewer.git
 7. `copilot-reviewer` → `llm-reviewer` (package name, MCP name — BEFORE rule 8)
 8. `copilot-review` → `llm-review` (CLI binary — after dot-prefixed and longer variants are handled)
 9. `Copilot Code Review` → `LLM Code Review` (formatter header)
-10. `Review code changes using GitHub Copilot` → `Review code changes using LLMs` (descriptions)
-11. `Free-form Copilot chat` / `Free-form chat with Copilot` → `Free-form LLM chat` (chat descriptions)
-12. `copilot_review` → `llm_review`, `copilot_chat` → `llm_chat`, `copilot_models` → `llm_models` (MCP tools)
-13. Version `0.1.0` → `1.0.0` (package.json, cli.ts, mcp-server.ts)
+10. `CopilotReviewError` → `LlmReviewError` (base error class — in types.ts, mcp-server.ts, tests)
+11. `Review code changes using GitHub Copilot` → `Review code changes using LLMs` (descriptions)
+12. `Chat with GitHub Copilot about code` → `Chat with LLM about code` (MCP chat tool description)
+13. `List available GitHub Copilot models` → `List available LLM models` (MCP models tool description)
+14. `Chat with Copilot` → `Chat with LLM` (CLI chat subcommand description)
+15. `Copilot returned no findings.` → `Provider returned no findings.` (warning message)
+16. `Free-form Copilot chat` / `Free-form chat with Copilot` → `Free-form LLM chat` (chat descriptions)
+17. `copilot_review` → `llm_review`, `copilot_chat` → `llm_chat`, `copilot_models` → `llm_models` (MCP tools)
+18. Version `0.1.0` → `1.0.0` (package.json, cli.ts, mcp-server.ts)
 
 **Ordering matters:** dot-prefixed paths (rules 4-5) and longer variants (rules 6-7) MUST be replaced before the shorter `copilot-review` (rule 8) to avoid partial match corruption (`.copilot-review` contains `copilot-review` as a substring).
 
