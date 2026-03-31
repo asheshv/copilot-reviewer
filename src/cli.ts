@@ -107,6 +107,7 @@ interface CLIOpts {
   provider?: string;
   chunking?: string;
   ollamaUrl?: string;
+  timeout?: string;
 }
 
 // ============================================================================
@@ -148,12 +149,13 @@ export async function handleReview(
       cliOverrides.chunking = opts.chunking as "auto" | "always" | "never";
     }
     if (opts.ollamaUrl) cliOverrides.ollamaUrl = opts.ollamaUrl;
+    if (opts.timeout) cliOverrides.timeout = parseInt(opts.timeout, 10);
 
     progress("Loading configuration... ");
     debug(verbose, `CLI overrides: ${JSON.stringify(cliOverrides)}`);
     const config = await loadConfig(cliOverrides);
     progress("done\n");
-    debug(verbose, `Resolved config: model=${config.model}, format=${config.format}, stream=${config.stream}`);
+    debug(verbose, `Resolved config: model=${config.model}, format=${config.format}, stream=${config.stream}, timeout=${config.timeout}s`);
 
     // Build diff options
     const diffOpts = buildDiffOptions(mode, modeArg, config.defaultBase);
@@ -625,10 +627,8 @@ export function buildProgram(): Command {
   const program = new Command()
     .name("copilot-review")
     .version(VERSION)
-    .description("Review code changes using GitHub Copilot");
-
-  // Main review command
-  program
+    .description("Review code changes using GitHub Copilot")
+    .enablePositionalOptions()
     .argument("[mode]", "Diff mode: unstaged|staged|local|branch|pr|commits|range", "local")
     .argument("[modeArg]", "Mode argument (base branch, PR number, etc.)")
     .option("--model <id>", "Model to use")
@@ -641,6 +641,7 @@ export function buildProgram(): Command {
     .option("--provider <name>", "Review provider: copilot, ollama")
     .option("--chunking <mode>", "Chunking mode: auto, always, never")
     .option("--ollama-url <url>", "Ollama base URL")
+    .option("--timeout <seconds>", "Request timeout in seconds (default: 30 for copilot, 120 for ollama)")
     .addOption(new Option("--mcp", "Start as MCP server").hideHelp())
     .action(async (mode: string, modeArg: string | undefined, opts: CLIOpts) => {
       const code = await handleReview(mode, modeArg, opts);

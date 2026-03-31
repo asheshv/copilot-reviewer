@@ -14,7 +14,7 @@ import {
 } from "../streaming.js";
 import type { ReviewProvider } from "./types.js";
 
-const OVERALL_TIMEOUT = 30000; // 30 seconds
+const DEFAULT_TIMEOUT_MS = 30000; // 30 seconds in ms
 const MAX_RETRIES = 2;
 const BASE_BACKOFF = 1000; // 1 second
 const MAX_BACKOFF = 10000; // 10 seconds
@@ -30,7 +30,11 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
 
   private _initialized = false;
 
-  constructor(protected baseUrl: string) {}
+  protected timeoutMs: number;
+
+  constructor(protected baseUrl: string, timeoutSeconds?: number) {
+    this.timeoutMs = (timeoutSeconds ?? 30) * 1000;
+  }
 
   /**
    * Return auth/custom headers. Content-Type is added by the base class.
@@ -106,7 +110,7 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
       const body = this.buildRequestBody(request);
       const headers = await this._buildHeaders();
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), OVERALL_TIMEOUT);
+      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
         const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -135,7 +139,7 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
           if (error.name === "AbortError") {
             throw new ClientError(
               "timeout",
-              `Request timed out after ${OVERALL_TIMEOUT}ms`,
+              `Request timed out after ${this.timeoutMs}ms`,
               true,
               error
             );
@@ -156,7 +160,7 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
     const body = this.buildRequestBody(request);
     const headers = await this._buildHeaders();
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), OVERALL_TIMEOUT);
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -211,7 +215,7 @@ export abstract class OpenAIChatProvider implements ReviewProvider {
       if (error instanceof Error && error.name === "AbortError") {
         throw new ClientError(
           "timeout",
-          `Request timed out after ${OVERALL_TIMEOUT}ms`,
+          `Request timed out after ${this.timeoutMs}ms`,
           true,
           error
         );

@@ -160,7 +160,7 @@ describe("createProvider — ollama", () => {
 
   it("uses the default URL http://localhost:11434 when no providerOptions given", async () => {
     await createProvider({ ...baseConfig, provider: "ollama", providerOptions: {} });
-    expect(OllamaProvider).toHaveBeenCalledWith("http://localhost:11434");
+    expect(OllamaProvider).toHaveBeenCalledWith("http://localhost:11434", baseConfig.timeout);
   });
 
   it("uses the custom URL from providerOptions.ollama.baseUrl", async () => {
@@ -169,7 +169,7 @@ describe("createProvider — ollama", () => {
       provider: "ollama",
       providerOptions: { ollama: { baseUrl: "http://custom:1234" } },
     });
-    expect(OllamaProvider).toHaveBeenCalledWith("http://custom:1234");
+    expect(OllamaProvider).toHaveBeenCalledWith("http://custom:1234", baseConfig.timeout);
   });
 
   it("calls initialize() on the created OllamaProvider", async () => {

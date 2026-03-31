@@ -125,6 +125,7 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     provider: "copilot",
     providerOptions: {},
     chunking: "auto",
+    timeout: 30, // default 30 seconds, overridden per-provider or via CLI
   };
 
   let currentMode: "extend" | "replace" = "extend";
@@ -217,6 +218,14 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
         ollama: { baseUrl: cliOverrides.ollamaUrl },
       };
     }
+    if (cliOverrides.timeout !== undefined) {
+      config.timeout = cliOverrides.timeout;
+    }
+  }
+
+  // Provider-specific timeout defaults (if not overridden by CLI/config)
+  if (config.provider === "ollama" && config.timeout === 30) {
+    config.timeout = 120; // 120 seconds default for local Ollama models
   }
 
   return config;

@@ -63,8 +63,8 @@ export class CopilotProvider extends OpenAIChatProvider {
   // Per-model fallback flag: true means skip /responses for this model
   private _responsesFallback = new Map<string, boolean>();
 
-  constructor(private auth: AuthProvider) {
-    super("https://api.githubcopilot.com");
+  constructor(private auth: AuthProvider, timeoutSeconds?: number) {
+    super("https://api.githubcopilot.com", timeoutSeconds);
   }
 
   /**
@@ -309,7 +309,7 @@ export class CopilotProvider extends OpenAIChatProvider {
             if (error.name === "AbortError") {
               throw new ClientError(
                 "timeout",
-                `Request timed out after 30000ms`,
+                `Request timed out after ${this.timeoutMs}ms`,
                 true,
                 error
               );
@@ -405,7 +405,7 @@ export class CopilotProvider extends OpenAIChatProvider {
       }
 
       if (error instanceof Error && error.name === "AbortError") {
-        throw new ClientError("timeout", `Request timed out after 30000ms`, true, error);
+        throw new ClientError("timeout", `Request timed out after ${this.timeoutMs}ms`, true, error);
       }
 
       if (error instanceof Error) {

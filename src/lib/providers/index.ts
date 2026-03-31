@@ -11,10 +11,10 @@ export type { ReviewProvider } from "./types.js";
 type ProviderFactory = (config: ResolvedConfig) => ReviewProvider;
 
 const PROVIDERS: Record<string, ProviderFactory> = {
-  copilot: (_config) => new CopilotProvider(createDefaultAuthProvider()),
+  copilot: (config) => new CopilotProvider(createDefaultAuthProvider(), config.timeout),
   ollama: (config) => {
     const url = (config.providerOptions as any)?.ollama?.baseUrl ?? "http://localhost:11434";
-    return new OllamaProvider(url);
+    return new OllamaProvider(url, config.timeout);
   },
 };
 

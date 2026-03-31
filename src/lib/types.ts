@@ -256,6 +256,7 @@ export interface ConfigFile {
     [key: string]: Record<string, unknown> | undefined;
   };
   chunking?: "auto" | "always" | "never";
+  timeout?: number; // request timeout in seconds
 }
 
 /**
@@ -274,6 +275,7 @@ export interface ResolvedConfig {
     [key: string]: Record<string, unknown> | undefined;
   };
   chunking: "auto" | "always" | "never";
+  timeout: number; // request timeout in seconds (default: 30 for copilot, 120 for ollama)
 }
 
 /**
@@ -288,6 +290,7 @@ export interface CLIOverrides {
   provider?: string;
   chunking?: "auto" | "always" | "never";
   ollamaUrl?: string;
+  timeout?: number;
 }
 
 // ============================================================================

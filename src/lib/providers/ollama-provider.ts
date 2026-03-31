@@ -30,7 +30,7 @@ export class OllamaProvider extends OpenAIChatProvider {
   private _cacheExpiry = 0;
   private _inflight: Promise<ModelInfo[]> | null = null;
 
-  constructor(baseUrl = "http://localhost:11434") {
+  constructor(baseUrl = "http://localhost:11434", timeoutSeconds?: number) {
     // Validate and normalize URL before calling super()
     let parsed: URL;
     try {
@@ -66,7 +66,7 @@ export class OllamaProvider extends OpenAIChatProvider {
     // Note: super() must be the first statement, so we store via a workaround:
     // We pass the /v1 URL to super, and compute ollamaRoot from parsed after.
     const root = `${parsed.protocol}//${parsed.host}`;
-    super(`${root}/v1`);
+    super(`${root}/v1`, timeoutSeconds);
     this.ollamaRoot = root;
   }
 
