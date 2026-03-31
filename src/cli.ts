@@ -669,7 +669,7 @@ async function main(): Promise<void> {
 
 // Only run main when this file is the entry point (not when imported for testing)
 // Run main() only when executed as a CLI entry point, not when imported by tests.
-// Check: argv[1] resolves to this file (dist/cli.js) or the bin symlink (copilot-review).
+// Check: argv[1] resolves to this file (dist/cli.js) or the bin symlink (llm-review).
 const scriptPath = process.argv[1] ?? "";
 const isEntryPoint =
   scriptPath.endsWith("/cli.js") ||
