@@ -54,7 +54,8 @@ Rename the tool from `copilot-reviewer` to `llm-reviewer` to reflect multi-provi
 |------|---------|
 | `package.json` | name, version, bin, description |
 | `package-lock.json` | regenerated via `npm install` after `package.json` changes |
-| `src/cli.ts` | CLI name, description ("Review code changes using LLMs"), `VERSION` constant, debug env, entry point detection, error messages |
+| `src/cli.ts` | CLI name, description ("Review code changes using LLMs"), `VERSION` constant, debug env, entry point detection, error messages. **Also simplify `resolveConfigStatus()`** — remove fallback path probing, remove `fallback`/`fallbackFound` properties, report only canonical `~/.llm-reviewer/` path. |
+| `src/lib/types.ts` | JSDoc: "copilot-reviewer" → "llm-reviewer" in base error class comment |
 | `src/mcp-server.ts` | server name/version (`llm-reviewer/1.0.0`), tool names (`llm_review`, `llm_chat`, `llm_models`), tool descriptions ("Review code changes using LLMs", "Free-form LLM chat") |
 | `src/lib/config.ts` | config dir paths (single `~/.llm-reviewer/`, no fallback), env var names (`LLM_REVIEWER_*`), warning messages. **Remove the fallback logic** in `resolveGlobalConfigDir()` and `resolveProjectConfigDir()` — simplify to single-path resolution. |
 | `src/lib/formatter.ts` | "Copilot Code Review" → "LLM Code Review" |
@@ -87,13 +88,13 @@ All markdown files in `docs/` need updating. Specific high-density files:
 | `docs/spec/README.md` | Title "GitHub Copilot Reviewer" → "LLM Reviewer", CLI name, MCP tool names, description |
 | `docs/plans/README.md` | Title "GitHub Copilot Reviewer" → "LLM Reviewer" |
 | `README.md` | Full update: tool name, CLI examples, config paths, env vars, "Free-form LLM chat" |
-| `docs/spec/01-architecture.md` | `.copilot-review/` in project structure tree |
+| `docs/spec/01-architecture.md` | `github-copilot-reviewer/` root dir name, `.copilot-review/` in project structure tree |
 | `docs/spec/06-configuration.md` | `~/.copilot-review/` config paths |
 | `docs/spec/07-review-orchestration.md` | `DEBUG=copilot-review` |
 | `docs/spec/08-cli.md` | CLI name, "Free-form Copilot chat" |
 | `docs/spec/09-mcp-server.md` | Tool names, descriptions |
 | `docs/spec/10-error-handling.md` | Config path in error examples |
-| `docs/spec/14-future.md` | `copilot-reviewer-action@v1` → `llm-reviewer-action@v1` |
+| `docs/spec/14-future.md` | `copilot-reviewer-action@v1` → `llm-reviewer-action@v1`, CLI name references throughout |
 | `docs/spec/15-multi-provider-and-chunked-review.md` | `copilot-review` CLI, `.code-reviewer/`, `CODEREVIEWER_*` throughout |
 | `docs/adr/003-config-layering.md` | `~/.copilot-review/`, `copilot-review --prompt` |
 | `docs/plans/*.md` | ~50+ references across plan files (old CLI name, config paths, env vars) |
@@ -127,7 +128,7 @@ Also remove:
 - Any `resolveGlobalConfigDir` / `resolveProjectConfigDir` async functions
 - Related tests for fallback behavior
 
-This is the **one logic change** — it simplifies the codebase by removing ~40 lines of fallback resolution.
+This simplifies the codebase by removing ~40 lines of fallback resolution in `config.ts` and ~60 lines of fallback probing in `cli.ts` (`resolveConfigStatus()`). The `StatusOutput` type's `config.global.fallback`/`fallbackFound` and `config.project.fallback`/`fallbackFound` fields become unnecessary and should be removed.
 
 ## GitHub Repo Rename
 
@@ -183,4 +184,7 @@ After rename:
 5. `node dist/cli.js status` — works with `~/.llm-reviewer/` paths
 6. `node dist/cli.js status --provider ollama` — Ollama still works
 7. `node dist/cli.js models --provider ollama` — lists models
-8. Grep verification: `grep -r "copilot-review\|CODEREVIEWER_\|\.code-reviewer\|Copilot Code Review" src/ test/ --include="*.ts"` returns NO results (only provider-level "Copilot" references remain)
+8. Grep verification — ALL of these return NO results in `src/` and `test/` (only provider-level "Copilot" references remain):
+   ```bash
+   grep -rE "copilot-review|copilot_review|copilot_chat|copilot_models|CODEREVIEWER_|\.code-reviewer|\.copilot-review|Copilot Code Review|Free-form Copilot" src/ test/ --include="*.ts"
+   ```
