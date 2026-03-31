@@ -123,6 +123,32 @@ Or if using locally (not installed globally):
 - `llm_chat` — Free-form chat with LLM (with optional code context)
 - `llm_models` — List available models
 
+## Claude Code Skill
+
+You can also add `llm-reviewer` as a [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) so Claude can invoke it automatically when you ask for code review.
+
+### Setup
+
+```bash
+# Copy the skill into your Claude skills directory
+mkdir -p ~/.claude/skills/llm-reviewer
+cp skills/SKILL.md ~/.claude/skills/llm-reviewer/SKILL.md
+```
+
+### Usage
+
+Once installed, Claude Code will automatically use `llm-reviewer` when you:
+- Ask to review code changes, diffs, or PRs
+- Complete a feature and want a second opinion
+- Request aggressive multi-round review
+
+You can also invoke it explicitly:
+```
+/llm-reviewer
+```
+
+The skill supports all providers (Copilot, Ollama), chunking, cross-model review, and the full CLI feature set. See [`skills/SKILL.md`](skills/SKILL.md) for the complete reference.
+
 ## Configuration
 
 Configuration is loaded from four layers (lowest to highest precedence):
