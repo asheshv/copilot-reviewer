@@ -35,6 +35,7 @@ Rename the tool from `copilot-reviewer` to `llm-reviewer` to reflect multi-provi
 | Debug env check | `DEBUG === "copilot-review"` | `DEBUG === "llm-review"` |
 | Entry point detection | `copilot-review` in argv | `llm-review` in argv |
 | Chat feature description | "Free-form Copilot chat" | "Free-form LLM chat" |
+| Env var: max diff size | `COPILOT_REVIEW_MAX_DIFF_SIZE` | `LLM_REVIEWER_MAX_DIFF_SIZE` |
 
 ## What Does NOT Change
 
@@ -59,6 +60,7 @@ Rename the tool from `copilot-reviewer` to `llm-reviewer` to reflect multi-provi
 | `src/mcp-server.ts` | server name/version (`llm-reviewer/1.0.0`), tool names (`llm_review`, `llm_chat`, `llm_models`), tool descriptions ("Review code changes using LLMs", "Free-form LLM chat") |
 | `src/lib/config.ts` | config dir paths (single `~/.llm-reviewer/`, no fallback), env var names (`LLM_REVIEWER_*`), warning messages. **Remove the fallback logic** in `resolveGlobalConfigDir()` and `resolveProjectConfigDir()` — simplify to single-path resolution. |
 | `src/lib/formatter.ts` | "Copilot Code Review" → "LLM Code Review" |
+| `src/lib/diff.ts` | env var `COPILOT_REVIEW_MAX_DIFF_SIZE` → `LLM_REVIEWER_MAX_DIFF_SIZE`, error messages |
 | `src/lib/providers/copilot-provider.ts` | `Editor-Version`, `Editor-Plugin-Version` header values |
 
 ### Tests
@@ -143,20 +145,21 @@ git remote set-url origin git@github.com:asheshv/llm-reviewer.git
 
 ### Replacement Rules (in order)
 
-1. `CODEREVIEWER_` → `LLM_REVIEWER_` (env vars — most specific, do first)
-2. `GitHub Copilot Reviewer` → `LLM Reviewer` (project title in docs)
-3. `copilot-reviewer` → `llm-reviewer` (package name, MCP name — before rule 4)
-4. `copilot-review` → `llm-review` (CLI binary — careful: don't match `copilot-reviewer`)
-5. `Copilot Code Review` → `LLM Code Review` (formatter header)
-6. `Review code changes using GitHub Copilot` → `Review code changes using LLMs` (descriptions)
-7. `Free-form Copilot chat` / `Free-form chat with Copilot` → `Free-form LLM chat` (chat descriptions)
-8. `copilot_review` → `llm_review`, `copilot_chat` → `llm_chat`, `copilot_models` → `llm_models` (MCP tools)
-9. `.copilot-review` → `.llm-reviewer` (dogfood config dir)
-10. `.code-reviewer` → `.llm-reviewer` (config dir paths)
-11. `copilot-reviewer-action` → `llm-reviewer-action` (future references in docs)
-12. Version `0.1.0` → `1.0.0` (package.json, cli.ts, mcp-server.ts)
+1. `COPILOT_REVIEW_MAX_DIFF_SIZE` → `LLM_REVIEWER_MAX_DIFF_SIZE` (most specific env var, do first)
+2. `CODEREVIEWER_` → `LLM_REVIEWER_` (env var prefix)
+3. `GitHub Copilot Reviewer` → `LLM Reviewer` (project title in docs)
+4. `.copilot-review` → `.llm-reviewer` (dogfood config dir — BEFORE rule 6, to avoid partial match)
+5. `.code-reviewer` → `.llm-reviewer` (config dir paths — BEFORE rule 6)
+6. `copilot-reviewer-action` → `llm-reviewer-action` (future references — BEFORE rule 7)
+7. `copilot-reviewer` → `llm-reviewer` (package name, MCP name — BEFORE rule 8)
+8. `copilot-review` → `llm-review` (CLI binary — after dot-prefixed and longer variants are handled)
+9. `Copilot Code Review` → `LLM Code Review` (formatter header)
+10. `Review code changes using GitHub Copilot` → `Review code changes using LLMs` (descriptions)
+11. `Free-form Copilot chat` / `Free-form chat with Copilot` → `Free-form LLM chat` (chat descriptions)
+12. `copilot_review` → `llm_review`, `copilot_chat` → `llm_chat`, `copilot_models` → `llm_models` (MCP tools)
+13. Version `0.1.0` → `1.0.0` (package.json, cli.ts, mcp-server.ts)
 
-**Ordering matters:** rules 2-3 before rule 4 to avoid partial matches.
+**Ordering matters:** dot-prefixed paths (rules 4-5) and longer variants (rules 6-7) MUST be replaced before the shorter `copilot-review` (rule 8) to avoid partial match corruption (`.copilot-review` contains `copilot-review` as a substring).
 
 **After replacement:** manually review each file for remaining "Copilot" references that should stay (provider name, API references) vs. should change (tool name).
 
@@ -186,5 +189,9 @@ After rename:
 7. `node dist/cli.js models --provider ollama` — lists models
 8. Grep verification — ALL of these return NO results in `src/` and `test/` (only provider-level "Copilot" references remain):
    ```bash
-   grep -rE "copilot-review|copilot_review|copilot_chat|copilot_models|CODEREVIEWER_|\.code-reviewer|\.copilot-review|Copilot Code Review|Free-form Copilot" src/ test/ --include="*.ts"
+   # Specific patterns
+   grep -rE "copilot-review|copilot_review|copilot_chat|copilot_models|CODEREVIEWER_|COPILOT_REVIEW_|\.code-reviewer|\.copilot-review|Copilot Code Review|Free-form Copilot" src/ test/ --include="*.ts"
+
+   # Broad catch-all (filter out known provider-level references)
+   grep -rni "copilot" src/ test/ --include="*.ts" | grep -v "CopilotProvider\|copilot_internal\|copilot_config\|github-copilot/\|Copilot-Integration-Id\|x-github-api-version\|provider.*copilot\|copilot.*provider"
    ```
