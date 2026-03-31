@@ -1,17 +1,17 @@
 // test/lib/types.test.ts
 import { describe, it, expect } from "vitest";
 import {
-  CopilotReviewError, AuthError, DiffError, ClientError,
+  LlmReviewError, AuthError, DiffError, ClientError,
   ConfigError, ModelError, ReviewError, ParameterError,
   EXIT_CODES,
 } from "../../src/lib/types.js";
 
-describe("CopilotReviewError", () => {
+describe("LlmReviewError", () => {
   it("extends Error with code, recoverable, and cause", () => {
     const cause = new Error("original");
     const err = new AuthError("no_token", "No token found", false, cause);
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(AuthError);
     expect(err.code).toBe("no_token");
     expect(err.message).toBe("No token found");
@@ -28,10 +28,10 @@ describe("AuthError", () => {
     expect(err.authorizeUrl).toBe("https://github.com/authorize");
   });
 
-  it("is instanceof CopilotReviewError and Error", () => {
+  it("is instanceof LlmReviewError and Error", () => {
     const err = new AuthError("no_token", "test", false);
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(AuthError);
     expect(err.name).toBe("AuthError");
   });
@@ -44,10 +44,10 @@ describe("DiffError", () => {
     expect(err.recoverable).toBe(false);
   });
 
-  it("is instanceof CopilotReviewError and Error", () => {
+  it("is instanceof LlmReviewError and Error", () => {
     const err = new DiffError("test", "msg");
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(DiffError);
     expect(err.name).toBe("DiffError");
   });
@@ -70,10 +70,10 @@ describe("ClientError", () => {
     expect(err.retryAfter).toBe(30);
   });
 
-  it("is instanceof CopilotReviewError and Error", () => {
+  it("is instanceof LlmReviewError and Error", () => {
     const err = new ClientError("test", "msg", false);
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(ClientError);
     expect(err.name).toBe("ClientError");
   });
@@ -81,16 +81,16 @@ describe("ClientError", () => {
 
 describe("ConfigError", () => {
   it("requires filePath in constructor", () => {
-    const err = new ConfigError("malformed_json", "Bad JSON", "~/.copilot-review/config.json");
-    expect(err.filePath).toBe("~/.copilot-review/config.json");
+    const err = new ConfigError("malformed_json", "Bad JSON", "~/.llm-reviewer/config.json");
+    expect(err.filePath).toBe("~/.llm-reviewer/config.json");
     expect(err.code).toBe("malformed_json");
     expect(err.recoverable).toBe(false);
   });
 
-  it("is instanceof CopilotReviewError and Error", () => {
+  it("is instanceof LlmReviewError and Error", () => {
     const err = new ConfigError("test", "msg", "/path");
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(ConfigError);
     expect(err.name).toBe("ConfigError");
   });
@@ -103,10 +103,10 @@ describe("ModelError", () => {
     expect(err.available).toEqual(["gpt-4.1", "gpt-4o"]);
   });
 
-  it("is instanceof CopilotReviewError and Error", () => {
+  it("is instanceof LlmReviewError and Error", () => {
     const err = new ModelError("test", "msg", false);
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(ModelError);
     expect(err.name).toBe("ModelError");
   });
@@ -119,10 +119,10 @@ describe("ReviewError", () => {
     expect(err.suggestion).toBe("Use ignorePaths");
   });
 
-  it("is instanceof CopilotReviewError and Error", () => {
+  it("is instanceof LlmReviewError and Error", () => {
     const err = new ReviewError("test", "msg", false);
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(ReviewError);
     expect(err.name).toBe("ReviewError");
   });
@@ -135,10 +135,10 @@ describe("ParameterError", () => {
     expect(err.recoverable).toBe(false);
   });
 
-  it("is instanceof CopilotReviewError and Error", () => {
+  it("is instanceof LlmReviewError and Error", () => {
     const err = new ParameterError("test", "msg");
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(ParameterError);
     expect(err.name).toBe("ParameterError");
   });

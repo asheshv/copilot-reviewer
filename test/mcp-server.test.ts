@@ -1,7 +1,7 @@
 // test/mcp-server.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
-  CopilotReviewError,
+  LlmReviewError,
   AuthError,
   DiffError,
   ParameterError,
@@ -77,22 +77,22 @@ describe("MCP Server", () => {
       expect(server.server).toBeDefined();
     });
 
-    it("registers copilot_review tool", () => {
+    it("registers llm_review tool", () => {
       const server = createMcpServer();
       const tools = (server as any)._registeredTools;
-      expect("copilot_review" in tools).toBe(true);
+      expect("llm_review" in tools).toBe(true);
     });
 
-    it("registers copilot_chat tool", () => {
+    it("registers llm_chat tool", () => {
       const server = createMcpServer();
       const tools = (server as any)._registeredTools;
-      expect("copilot_chat" in tools).toBe(true);
+      expect("llm_chat" in tools).toBe(true);
     });
 
-    it("registers copilot_models tool", () => {
+    it("registers llm_models tool", () => {
       const server = createMcpServer();
       const tools = (server as any)._registeredTools;
-      expect("copilot_models" in tools).toBe(true);
+      expect("llm_models" in tools).toBe(true);
     });
   });
 
@@ -260,7 +260,7 @@ describe("MCP Server", () => {
       expect(parsed.error).toBe("invalid_parameter");
     });
 
-    it("returns structured error for unexpected non-CopilotReviewError", async () => {
+    it("returns structured error for unexpected non-LlmReviewError", async () => {
       (mockReview as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("unexpected"));
 
       const result = await handleReview({ mode: "staged" });
@@ -350,7 +350,7 @@ describe("MCP Server", () => {
       expect(mockAutoSelect).toHaveBeenCalled();
     });
 
-    it("returns structured error on CopilotReviewError", async () => {
+    it("returns structured error on LlmReviewError", async () => {
       mockAutoSelect.mockRejectedValue(new AuthError("no_token", "No token", false));
 
       const result = await handleChat({ message: "Hello" });

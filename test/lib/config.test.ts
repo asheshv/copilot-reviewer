@@ -614,8 +614,8 @@ describe("loadConfig", () => {
       vi.unstubAllEnvs();
     });
 
-    it("CODEREVIEWER_PROVIDER sets config.provider", async () => {
-      vi.stubEnv("CODEREVIEWER_PROVIDER", "ollama");
+    it("LLM_REVIEWER_PROVIDER sets config.provider", async () => {
+      vi.stubEnv("LLM_REVIEWER_PROVIDER", "ollama");
       mockGitRoot(null);
       mockAccess.mockRejectedValue(createENOENT());
 
@@ -624,8 +624,8 @@ describe("loadConfig", () => {
       expect(config.provider).toBe("ollama");
     });
 
-    it("CODEREVIEWER_OLLAMA_URL sets config.providerOptions.ollama.baseUrl", async () => {
-      vi.stubEnv("CODEREVIEWER_OLLAMA_URL", "http://remote:11434");
+    it("LLM_REVIEWER_OLLAMA_URL sets config.providerOptions.ollama.baseUrl", async () => {
+      vi.stubEnv("LLM_REVIEWER_OLLAMA_URL", "http://remote:11434");
       mockGitRoot(null);
       mockAccess.mockRejectedValue(createENOENT());
 
@@ -634,8 +634,8 @@ describe("loadConfig", () => {
       expect(config.providerOptions.ollama?.baseUrl).toBe("http://remote:11434");
     });
 
-    it("CODEREVIEWER_OLLAMA_URL throws ConfigError for malformed URL", async () => {
-      vi.stubEnv("CODEREVIEWER_OLLAMA_URL", "not-a-url");
+    it("LLM_REVIEWER_OLLAMA_URL throws ConfigError for malformed URL", async () => {
+      vi.stubEnv("LLM_REVIEWER_OLLAMA_URL", "not-a-url");
       mockGitRoot(null);
       mockAccess.mockRejectedValue(createENOENT());
 
@@ -646,8 +646,8 @@ describe("loadConfig", () => {
       });
     });
 
-    it("CODEREVIEWER_OLLAMA_URL throws ConfigError for non-http/https scheme", async () => {
-      vi.stubEnv("CODEREVIEWER_OLLAMA_URL", "file:///etc/passwd");
+    it("LLM_REVIEWER_OLLAMA_URL throws ConfigError for non-http/https scheme", async () => {
+      vi.stubEnv("LLM_REVIEWER_OLLAMA_URL", "file:///etc/passwd");
       mockGitRoot(null);
       mockAccess.mockRejectedValue(createENOENT());
 
@@ -658,8 +658,8 @@ describe("loadConfig", () => {
       });
     });
 
-    it("CODEREVIEWER_CHUNKING=never sets config.chunking", async () => {
-      vi.stubEnv("CODEREVIEWER_CHUNKING", "never");
+    it("LLM_REVIEWER_CHUNKING=never sets config.chunking", async () => {
+      vi.stubEnv("LLM_REVIEWER_CHUNKING", "never");
       mockGitRoot(null);
       mockAccess.mockRejectedValue(createENOENT());
 
@@ -668,8 +668,8 @@ describe("loadConfig", () => {
       expect(config.chunking).toBe("never");
     });
 
-    it("CODEREVIEWER_CHUNKING=always sets config.chunking", async () => {
-      vi.stubEnv("CODEREVIEWER_CHUNKING", "always");
+    it("LLM_REVIEWER_CHUNKING=always sets config.chunking", async () => {
+      vi.stubEnv("LLM_REVIEWER_CHUNKING", "always");
       mockGitRoot(null);
       mockAccess.mockRejectedValue(createENOENT());
 
@@ -678,8 +678,8 @@ describe("loadConfig", () => {
       expect(config.chunking).toBe("always");
     });
 
-    it("config file provider overrides CODEREVIEWER_PROVIDER env var", async () => {
-      vi.stubEnv("CODEREVIEWER_PROVIDER", "ollama");
+    it("config file provider overrides LLM_REVIEWER_PROVIDER env var", async () => {
+      vi.stubEnv("LLM_REVIEWER_PROVIDER", "ollama");
       mockGitRoot(null);
       const globalJson = '{ "provider": "copilot" }';
 
@@ -705,8 +705,8 @@ describe("loadConfig", () => {
       expect(config.provider).toBe("copilot");
     });
 
-    it("CODEREVIEWER_CHUNKING=invalid throws ConfigError", async () => {
-      vi.stubEnv("CODEREVIEWER_CHUNKING", "invalid");
+    it("LLM_REVIEWER_CHUNKING=invalid throws ConfigError", async () => {
+      vi.stubEnv("LLM_REVIEWER_CHUNKING", "invalid");
       mockGitRoot(null);
       mockAccess.mockRejectedValue(createENOENT());
 

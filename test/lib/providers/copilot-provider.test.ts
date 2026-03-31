@@ -132,8 +132,8 @@ describe("CopilotProvider", () => {
       const headers = await (provider as any).getHeaders();
 
       expect(headers["Authorization"]).toBe("Bearer test-token");
-      expect(headers["Editor-Version"]).toBe("copilot-reviewer/0.1.0");
-      expect(headers["Editor-Plugin-Version"]).toBe("copilot-reviewer/0.1.0");
+      expect(headers["Editor-Version"]).toBe("llm-reviewer/1.0.0");
+      expect(headers["Editor-Plugin-Version"]).toBe("llm-reviewer/1.0.0");
       expect(headers["Copilot-Integration-Id"]).toBe("vscode-chat");
       expect(headers["x-github-api-version"]).toBe("2025-10-01");
       // Content-Type is NOT returned by getHeaders() — base class adds it

@@ -469,7 +469,7 @@ describe("review()", () => {
 
       // Content should be formatted (not raw empty string) — formatter adds structure
       expect(result.content).toBe("formatted:markdown:");
-      expect(result.warnings).toContain("Copilot returned no findings.");
+      expect(result.warnings).toContain("Provider returned no findings.");
     });
   });
 });

@@ -19,13 +19,13 @@ describe("format()", () => {
   describe("markdown format", () => {
     it("includes header with model, files, stats", () => {
       const output = format(mockResult, "markdown");
-      expect(output).toContain("# Copilot Code Review");
+      expect(output).toContain("# LLM Code Review");
       expect(output).toContain("**Model:** gpt-4.1");
       expect(output).toContain("**Files:** 1");
       expect(output).toContain("**+10 -3**");
     });
 
-    it("passes through Copilot content as-is", () => {
+    it("passes through LLM content as-is", () => {
       const output = format(mockResult, "markdown");
       expect(output).toContain("### HIGH SQL injection");
       expect(output).toContain("**File:** `db.ts` **Line:** 42");
@@ -95,7 +95,7 @@ describe("format()", () => {
 
     it("includes plain header with model, files, stats", () => {
       const output = format(mockMarkdownContent, "text");
-      expect(output).toContain("Copilot Code Review");
+      expect(output).toContain("LLM Code Review");
       expect(output).toContain("Model: gpt-4.1");
       expect(output).toContain("Files: 1");
       expect(output).toContain("+5 -2");

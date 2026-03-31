@@ -5,7 +5,7 @@ import * as lib from "../../src/lib/index.js";
 describe("public API exports", () => {
   it("exports all types", () => {
     // Error classes
-    expect(lib.CopilotReviewError).toBeDefined();
+    expect(lib.LlmReviewError).toBeDefined();
     expect(lib.AuthError).toBeDefined();
     expect(lib.DiffError).toBeDefined();
     expect(lib.ClientError).toBeDefined();

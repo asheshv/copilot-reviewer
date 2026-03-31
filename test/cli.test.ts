@@ -179,7 +179,7 @@ describe("CLI", () => {
       const reviewCmd = program;
       const modeArg = reviewCmd.args; // Not parsed yet
       // Instead, check the program definition has default
-      expect(program.name()).toBe("copilot-review");
+      expect(program.name()).toBe("llm-review");
     });
 
     it("parses --model flag", () => {
@@ -803,9 +803,9 @@ describe("CLI", () => {
       expect(stderrOutput).toContain("[debug]");
     });
 
-    it("DEBUG=copilot-review env var enables verbose", async () => {
+    it("DEBUG=llm-review env var enables verbose", async () => {
       const origDebug = process.env.DEBUG;
-      process.env.DEBUG = "copilot-review";
+      process.env.DEBUG = "llm-review";
 
       mockReview.mockResolvedValue(makeReviewResult());
       mockDetectHigh.mockReturnValue(false);

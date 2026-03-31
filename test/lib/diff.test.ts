@@ -17,7 +17,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   originalEnv = process.env;
   process.env = { ...originalEnv };
-  delete process.env.COPILOT_REVIEW_MAX_DIFF_SIZE;
+  delete process.env.LLM_REVIEWER_MAX_DIFF_SIZE;
 });
 
 afterEach(() => {
@@ -393,8 +393,8 @@ describe("collectDiff", () => {
       });
     });
 
-    it("respects COPILOT_REVIEW_MAX_DIFF_SIZE env var for size limit", async () => {
-      process.env.COPILOT_REVIEW_MAX_DIFF_SIZE = "1048576"; // 1 MB
+    it("respects LLM_REVIEWER_MAX_DIFF_SIZE env var for size limit", async () => {
+      process.env.LLM_REVIEWER_MAX_DIFF_SIZE = "1048576"; // 1 MB
       const largeDiff = "a".repeat(2 * 1024 * 1024); // 2 MB
       mockExecFile.mockImplementation((cmd, args, callback: any) => {
         callback(null, { stdout: largeDiff, stderr: "" });
@@ -407,7 +407,7 @@ describe("collectDiff", () => {
     });
 
     it("falls back to default size limit when env var is invalid", async () => {
-      process.env.COPILOT_REVIEW_MAX_DIFF_SIZE = "invalid";
+      process.env.LLM_REVIEWER_MAX_DIFF_SIZE = "invalid";
       const largeDiff = "a".repeat(11 * 1024 * 1024); // 11 MB (exceeds default 10MB)
       mockExecFile.mockImplementation((cmd, args, callback: any) => {
         callback(null, { stdout: largeDiff, stderr: "" });
@@ -420,7 +420,7 @@ describe("collectDiff", () => {
     });
 
     it("falls back to default size limit when env var is negative", async () => {
-      process.env.COPILOT_REVIEW_MAX_DIFF_SIZE = "-100";
+      process.env.LLM_REVIEWER_MAX_DIFF_SIZE = "-100";
       const largeDiff = "a".repeat(11 * 1024 * 1024); // 11 MB (exceeds default 10MB)
       mockExecFile.mockImplementation((cmd, args, callback: any) => {
         callback(null, { stdout: largeDiff, stderr: "" });
