@@ -205,7 +205,7 @@ async function chunkedReview(
             );
           }
 
-          if (process.stderr.isTTY) {
+          if (process.env.LLM_REVIEWER_PROGRESS !== "0") {
             const tokenStr = subResponse.usage?.totalTokens ?? 0;
             process.stderr.write(
               `Reviewing chunk ${i + 1}/${totalChunks} sub-chunk ${j + 1}/${subChunks.length} (${subFiles.join(", ")})... done (${tokenStr} tokens)\n`,
@@ -230,7 +230,7 @@ async function chunkedReview(
       }
     }
 
-    if (process.stderr.isTTY) {
+    if (process.env.LLM_REVIEWER_PROGRESS !== "0") {
       const tokenStr = response.usage?.totalTokens ?? 0;
       process.stderr.write(
         `Reviewing chunk ${i + 1}/${totalChunks} (${chunkFiles.join(", ")})... done (${tokenStr} tokens)\n`,
@@ -525,7 +525,7 @@ async function chunkedReviewStream(
       );
     }
 
-    if (process.stderr.isTTY) {
+    if (process.env.LLM_REVIEWER_PROGRESS !== "0") {
       const tokenStr = response.usage?.totalTokens ?? 0;
       process.stderr.write(
         `Reviewing chunk ${i + 1}/${totalChunks} (${chunkFiles.join(", ")})... done (${tokenStr} tokens)\n`,
@@ -567,7 +567,7 @@ async function chunkedReviewStream(
   const reduceMessageBody = assembleReduceMessage(chunkFindingsForReduce, diff.files, hunkRanges);
   const reduceMessage = truncationPreamble + reduceMessageBody;
 
-  if (process.stderr.isTTY) {
+  if (process.env.LLM_REVIEWER_PROGRESS !== "0") {
     process.stderr.write("Aggregating findings...\n");
   }
 
