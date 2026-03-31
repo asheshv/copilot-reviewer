@@ -14,7 +14,7 @@ Rename the tool from `copilot-reviewer` to `llm-reviewer` to reflect multi-provi
 |------|-----|-----|
 | Package name (`package.json`) | `copilot-reviewer` | `llm-reviewer` |
 | Package description | "Review code changes using GitHub Copilot" | "Review code changes using LLMs" |
-| CLI binary (`package.json` bin) | `copilot-review` | `llm-review` |
+| CLI binary (`package.json` bin) | `copilot-review` | `llm-reviewer` |
 | Version | `0.1.0` | `1.0.0` |
 | GitHub repo | `asheshv/copilot-reviewer` | `asheshv/llm-reviewer` |
 | Project title (docs) | "GitHub Copilot Reviewer" | "LLM Reviewer" |
@@ -36,8 +36,8 @@ Rename the tool from `copilot-reviewer` to `llm-reviewer` to reflect multi-provi
 | Formatter headers | "Copilot Code Review" | "LLM Code Review" |
 | Editor-Version header | `copilot-reviewer/0.1.0` | `llm-reviewer/1.0.0` |
 | Editor-Plugin-Version header | `copilot-reviewer/0.1.0` | `llm-reviewer/1.0.0` |
-| Debug env check | `DEBUG === "copilot-review"` | `DEBUG === "llm-review"` |
-| Entry point detection | `copilot-review` in argv | `llm-review` in argv |
+| Debug env check | `DEBUG === "copilot-review"` | `DEBUG === "llm-reviewer"` |
+| Entry point detection | `copilot-review` in argv | `llm-reviewer` in argv |
 | Chat feature description | "Free-form Copilot chat" | "Free-form LLM chat" |
 | Env var: max diff size | `COPILOT_REVIEW_MAX_DIFF_SIZE` | `LLM_REVIEWER_MAX_DIFF_SIZE` |
 | Base error class | `CopilotReviewError` | `LlmReviewError` |
@@ -162,7 +162,7 @@ git remote set-url origin git@github.com:asheshv/llm-reviewer.git
 5. `.code-reviewer` → `.llm-reviewer` (config dir paths — BEFORE rule 6)
 6. `copilot-reviewer-action` → `llm-reviewer-action` (future references — BEFORE rule 7)
 7. `copilot-reviewer` → `llm-reviewer` (package name, MCP name — BEFORE rule 8)
-8. `copilot-review` → `llm-review` (CLI binary — after dot-prefixed and longer variants are handled)
+8. `copilot-review` → `llm-reviewer` (CLI binary — after dot-prefixed and longer variants are handled)
 9. `Copilot Code Review` → `LLM Code Review` (formatter header)
 10. `CopilotReviewError` → `LlmReviewError` (base error class — in types.ts, mcp-server.ts, tests)
 11. `Review code changes using GitHub Copilot` → `Review code changes using LLMs` (descriptions)
@@ -198,7 +198,7 @@ After rename:
 1. `npx vitest run` — all tests pass
 2. `npx tsc --noEmit` — clean
 3. `npm run build` — clean
-4. `node dist/cli.js --help` — shows "llm-review" and "Review code changes using LLMs"
+4. `node dist/cli.js --help` — shows "llm-reviewer" and "Review code changes using LLMs"
 5. `node dist/cli.js status` — works with `~/.llm-reviewer/` paths
 6. `node dist/cli.js status --provider ollama` — Ollama still works
 7. `node dist/cli.js models --provider ollama` — lists models

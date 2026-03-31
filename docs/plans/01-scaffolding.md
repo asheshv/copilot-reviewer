@@ -23,7 +23,7 @@
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
   "bin": {
-    "llm-review": "dist/cli.js"
+    "llm-reviewer": "dist/cli.js"
   },
   "files": [
     "dist/",

@@ -10,7 +10,7 @@
 
 A TypeScript/Node.js tool that reviews code changes using GitHub Copilot's chat API. Two entry points share a common library:
 
-- **CLI** (`llm-review`) — standalone command-line tool for reviewing diffs
+- **CLI** (`llm-reviewer`) — standalone command-line tool for reviewing diffs
 - **MCP Server** — exposes review, chat, and model listing as tools for any MCP-compatible AI agent
 
 The CLI is the engine; the MCP server is the interface layer. Both import a shared `lib/` — no process spawning between them.

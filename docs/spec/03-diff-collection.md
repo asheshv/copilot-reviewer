@@ -8,13 +8,13 @@
 
 | Mode | Git Command | CLI Usage | Notes |
 |------|------------|-----------|-------|
-| `unstaged` | `git diff` | `llm-review unstaged` | Working tree vs index |
-| `staged` | `git diff --cached` | `llm-review staged` | Index vs HEAD |
-| `local` | `git diff HEAD` | `llm-review local` | **Default.** Staged + unstaged |
-| `branch` | `git diff <base>...HEAD` | `llm-review branch [base]` | Uses `defaultBase` from [config](./06-configuration.md) if no base specified |
-| `pr` | `gh pr diff <number> --patch` | `llm-review pr <number>` | Requires `gh` CLI |
-| `commits` | `git diff HEAD~<n>..HEAD` | `llm-review commits <n>` | Last N commits |
-| `range` | `git diff <ref1>..<ref2>` | `llm-review range <ref1>..<ref2>` | Arbitrary ref range |
+| `unstaged` | `git diff` | `llm-reviewer unstaged` | Working tree vs index |
+| `staged` | `git diff --cached` | `llm-reviewer staged` | Index vs HEAD |
+| `local` | `git diff HEAD` | `llm-reviewer local` | **Default.** Staged + unstaged |
+| `branch` | `git diff <base>...HEAD` | `llm-reviewer branch [base]` | Uses `defaultBase` from [config](./06-configuration.md) if no base specified |
+| `pr` | `gh pr diff <number> --patch` | `llm-reviewer pr <number>` | Requires `gh` CLI |
+| `commits` | `git diff HEAD~<n>..HEAD` | `llm-reviewer commits <n>` | Last N commits |
+| `range` | `git diff <ref1>..<ref2>` | `llm-reviewer range <ref1>..<ref2>` | Arbitrary ref range |
 
 ## Interface
 

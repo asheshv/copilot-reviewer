@@ -497,7 +497,7 @@ Add `status` subcommand to `buildProgram()`.
 
 ```bash
 git add src/cli.ts test/
-git commit -m "feat: add 'llm-review status' command"
+git commit -m "feat: add 'llm-reviewer status' command"
 ```
 
 ---

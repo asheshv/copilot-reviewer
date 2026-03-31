@@ -20,14 +20,14 @@ These items are intentionally deferred. They are recorded here so the design acc
 
 ### CLI
 
-- **`llm-review quota`** — display remaining premium requests and reset date via `/copilot_internal/user` endpoint.
+- **`llm-reviewer quota`** — display remaining premium requests and reset date via `/copilot_internal/user` endpoint.
 - **Secret scanning** — pre-scan diff for common secret patterns (API keys, tokens) and warn before sending to Copilot API.
 
 ### Review Features
 
 - **BPE tokenizer** — accurate token counting using the model's actual tokenizer vocabulary (e.g., `o200k_base`). Replaces the char/4 heuristic.
 - **Severity parsing** — extract structured findings from Copilot's markdown response into typed objects (`{ severity, title, file, line, category, suggestion }`). Enables programmatic filtering and reporting.
-- **Watch mode** — re-run review on file changes (`llm-review --watch`).
+- **Watch mode** — re-run review on file changes (`llm-reviewer --watch`).
 - **Multi-model review** — run the same diff through multiple models, deduplicate and compare findings.
 - **File-level splitting** — for diffs exceeding token limits, automatically split into per-file reviews and aggregate.
 
@@ -35,9 +35,9 @@ These items are intentionally deferred. They are recorded here so the design acc
 
 - **GitHub Actions** — pre-built action for CI pipelines: `uses: owner/llm-reviewer-action@v1`.
 - **PR comment posting** — post review findings as GitHub PR comments (inline on specific lines).
-- **npm package** — publish to npm for `npx llm-review` usage.
+- **npm package** — publish to npm for `npx llm-reviewer` usage.
 
 ### Configuration
 
 - **JSON schema** — publish a JSON Schema for `config.json` for editor autocomplete and validation.
-- **Config validation CLI** — `llm-review config validate` to check config files without running a review.
+- **Config validation CLI** — `llm-reviewer config validate` to check config files without running a review.

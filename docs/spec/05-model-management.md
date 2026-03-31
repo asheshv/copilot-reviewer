@@ -84,7 +84,7 @@ autoSelect(): Promise<string>           // returns model ID
 validateModel(id: string): Promise<ModelInfo>  // throws ModelError if not found
 ```
 
-## CLI: `llm-review models`
+## CLI: `llm-reviewer models`
 
 Lists available models in a human-readable table:
 
@@ -118,7 +118,7 @@ GET https://api.github.com/copilot_internal/user
 Authorization: Token <oauth_token>
 ```
 
-Returns `quota_snapshots.premium_interactions.remaining` and `quota_reset_date`. The CLI `llm-review models` command should display cost multiplier (if available from API). A dedicated `llm-review quota` subcommand is a [future enhancement](./14-future.md).
+Returns `quota_snapshots.premium_interactions.remaining` and `quota_reset_date`. The CLI `llm-reviewer models` command should display cost multiplier (if available from API). A dedicated `llm-reviewer quota` subcommand is a [future enhancement](./14-future.md).
 
 ## GitHub Models Provider (Alternative)
 

@@ -1,4 +1,4 @@
-# llm-review
+# llm-reviewer
 
 Review code changes using LLMs — CLI + MCP server for any AI agent.
 
@@ -16,19 +16,19 @@ npx github:asheshv/llm-reviewer#v1.0.0 --help
 
 ```bash
 # Review uncommitted local changes
-llm-review
+llm-reviewer
 
 # Review changes in a feature branch vs main
-llm-review branch main
+llm-reviewer branch main
 
 # Review a pull request
-llm-review pr 123
+llm-reviewer pr 123
 ```
 
 ## CLI Usage
 
 ```
-llm-review [mode] [options]
+llm-reviewer [mode] [options]
 
 Modes (default: local):
   unstaged              Working tree vs index
@@ -51,27 +51,27 @@ Options:
   --version          Show version
 
 Subcommands:
-  llm-review models          List available models
-  llm-review chat "<msg>"    Free-form LLM chat
+  llm-reviewer models          List available models
+  llm-reviewer chat "<msg>"    Free-form LLM chat
 ```
 
 ### Examples
 
 ```bash
 # Review staged changes before committing
-llm-review staged
+llm-reviewer staged
 
 # Review the last 3 commits
-llm-review commits 3
+llm-reviewer commits 3
 
 # Review a ref range
-llm-review range v1.0.0..HEAD
+llm-reviewer range v1.0.0..HEAD
 
 # Use a specific model with JSON output
-llm-review branch main --model gpt-4.1 --format json
+llm-reviewer branch main --model gpt-4.1 --format json
 
 # Custom review instructions
-llm-review --prompt "Focus on security and error handling"
+llm-reviewer --prompt "Focus on security and error handling"
 ```
 
 ## MCP Server Setup
@@ -86,7 +86,7 @@ Add to `.mcp.json` in your project root or `~/.config/claude/mcp.json`:
 {
   "mcpServers": {
     "llm-reviewer": {
-      "command": "llm-review",
+      "command": "llm-reviewer",
       "args": ["--mcp"]
     }
   }
@@ -99,7 +99,7 @@ Add to `.mcp.json` in your project root or `~/.config/claude/mcp.json`:
 {
   "llm-reviewer": {
     "type": "stdio",
-    "command": "llm-review",
+    "command": "llm-reviewer",
     "args": ["--mcp"]
   }
 }
@@ -199,7 +199,7 @@ If project config uses `"mode": "replace"`, only the project prompt is used.
 CLI `--prompt` flag always replaces everything:
 
 ```bash
-llm-review --prompt "Only check for SQL injection"
+llm-reviewer --prompt "Only check for SQL injection"
 ```
 
 ## Default Review Prompt
@@ -264,7 +264,7 @@ Complete structured output in a single JSON object:
 Use `--stream --format json` for newline-delimited JSON stream:
 
 ```bash
-llm-review --stream --format json | while read line; do
+llm-reviewer --stream --format json | while read line; do
   echo "$line" | jq -r '.text // empty'
 done
 ```
@@ -276,7 +276,7 @@ Each line is a valid JSON object. Enables real-time machine consumption of strea
 | Code | Meaning | Use Case |
 |------|---------|----------|
 | 0 | Success — no HIGH severity issues | Normal completion |
-| 1 | Review completed with HIGH findings | CI gating: `llm-review branch main \|\| exit 1` |
+| 1 | Review completed with HIGH findings | CI gating: `llm-reviewer branch main \|\| exit 1` |
 | 2 | Authentication failure | No GitHub token found |
 | 3 | Diff error | Empty diff, not a git repo, etc. |
 | 4 | API/model error | Rate limit, server error, model unavailable |
@@ -286,10 +286,10 @@ Each line is a valid JSON object. Enables real-time machine consumption of strea
 
 ```bash
 # Fail the build if high-severity issues are found
-llm-review branch main || exit 1
+llm-reviewer branch main || exit 1
 
 # Or capture the exit code
-llm-review branch main
+llm-reviewer branch main
 if [ $? -eq 1 ]; then
   echo "High-severity issues found. Please review."
   exit 1
@@ -303,7 +303,7 @@ GitHub token is resolved in priority order. First match wins.
 1. **`$GITHUB_TOKEN` environment variable**
    ```bash
    export GITHUB_TOKEN="ghp_xxxxxxxxxxxx"
-   llm-review
+   llm-reviewer
    ```
 
 2. **Copilot config files** (created by editor extensions)
@@ -313,7 +313,7 @@ GitHub token is resolved in priority order. First match wins.
 3. **GitHub CLI (`gh`)**
    ```bash
    gh auth login
-   llm-review
+   llm-reviewer
    ```
 
 The tool automatically exchanges your OAuth token for a session token and caches it for subsequent requests.
@@ -359,7 +359,7 @@ node dist/cli.js --help
 
 # Or link globally for testing
 npm link
-llm-review --help
+llm-reviewer --help
 ```
 
 ### Project Structure

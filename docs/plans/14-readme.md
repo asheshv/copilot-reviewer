@@ -16,7 +16,7 @@ Sections:
 
 ### Title + Badge
 ```markdown
-# llm-review
+# llm-reviewer
 Review code changes using LLMs — CLI + MCP server.
 ```
 
@@ -24,7 +24,7 @@ Review code changes using LLMs — CLI + MCP server.
 ```bash
 npm install -g llm-reviewer
 # or
-npx llm-review --help
+npx llm-reviewer --help
 ```
 
 ### Quick Start
@@ -36,7 +36,7 @@ Full usage block from spec 08. All 7 modes, all flags, subcommands.
 ### MCP Server Setup
 Configuration snippets for:
 - Claude Code: `.mcp.json`
-- Generic MCP client: `llm-review --mcp`
+- Generic MCP client: `llm-reviewer --mcp`
 
 ### Configuration
 4-layer config explanation. `config.json` schema (from spec 06). `config.md` prompt override. `extend` vs `replace` mode with examples.

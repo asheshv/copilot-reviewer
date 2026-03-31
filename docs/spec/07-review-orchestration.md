@@ -180,7 +180,7 @@ If Copilot returns an empty `content` string (no findings), this is NOT an error
 
 ## Logging
 
-When `--verbose` is set or `DEBUG=llm-review` env var is present:
+When `--verbose` is set or `DEBUG=llm-reviewer` env var is present:
 - Log resolved config (with token values redacted)
 - Log auth token source and expiry time
 - Log API request URL, method, and headers (with Authorization redacted)

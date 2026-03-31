@@ -29,7 +29,7 @@ const VERSION = "1.0.0";
 // ============================================================================
 
 function isVerbose(explicitFlag: boolean): boolean {
-  return explicitFlag || process.env.DEBUG === "llm-review";
+  return explicitFlag || process.env.DEBUG === "llm-reviewer";
 }
 
 function progress(msg: string): void {
@@ -594,7 +594,7 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
 
 export function buildProgram(): Command {
   const program = new Command()
-    .name("llm-review")
+    .name("llm-reviewer")
     .version(VERSION)
     .description("Review code changes using LLMs")
     .enablePositionalOptions()
@@ -669,13 +669,13 @@ async function main(): Promise<void> {
 
 // Only run main when this file is the entry point (not when imported for testing)
 // Run main() only when executed as a CLI entry point, not when imported by tests.
-// Check: argv[1] resolves to this file (dist/cli.js) or the bin symlink (llm-review).
+// Check: argv[1] resolves to this file (dist/cli.js) or the bin symlink (llm-reviewer).
 const scriptPath = process.argv[1] ?? "";
 const isEntryPoint =
   scriptPath.endsWith("/cli.js") ||
   scriptPath.endsWith("/cli.ts") ||
-  scriptPath.endsWith("/llm-review") ||
-  scriptPath.endsWith("/.bin/llm-review");
+  scriptPath.endsWith("/llm-reviewer") ||
+  scriptPath.endsWith("/.bin/llm-reviewer");
 
 if (isEntryPoint) {
   main().catch((err) => {

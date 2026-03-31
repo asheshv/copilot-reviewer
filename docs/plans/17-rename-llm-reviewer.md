@@ -118,7 +118,7 @@ Apply all 18 replacement rules to source TypeScript files. Order matters — app
   "version": "1.0.0",
   "description": "Review code changes using LLMs",
   "bin": {
-    "llm-review": "dist/cli.js"
+    "llm-reviewer": "dist/cli.js"
   }
 }
 ```
@@ -135,7 +135,7 @@ Apply all 18 replacement rules to source TypeScript files. Order matters — app
 - `CODEREVIEWER_CHUNKING` → `LLM_REVIEWER_CHUNKING`
 - `.code-reviewer` → `.llm-reviewer` (any remaining path references)
 - `.copilot-review` → `.llm-reviewer` (any remaining references)
-- `copilot-review` → `llm-review` (in warning messages, comments)
+- `copilot-review` → `llm-reviewer` (in warning messages, comments)
 
 - [ ] **Step 4: Apply rules to src/lib/diff.ts**
 
@@ -152,7 +152,7 @@ Apply all 18 replacement rules to source TypeScript files. Order matters — app
 - [ ] **Step 7: Apply rules to src/cli.ts**
 
 - `VERSION = "0.1.0"` → `VERSION = "1.0.0"`
-- `copilot-review` → `llm-review` (CLI name, entry point detection, debug env)
+- `copilot-review` → `llm-reviewer` (CLI name, entry point detection, debug env)
 - `"Review code changes using GitHub Copilot"` → `"Review code changes using LLMs"`
 - `"Chat with Copilot"` → `"Chat with LLM"`
 - `CopilotReviewError` → `LlmReviewError` (if imported)
@@ -237,8 +237,8 @@ git commit -m "rename: copilot-reviewer → llm-reviewer across all source files
 
 - [ ] **Step 8: Apply rules to test/cli.test.ts**
 
-- `copilot-review` → `llm-review` (CLI name assertions)
-- `DEBUG=copilot-review` → `DEBUG=llm-review`
+- `copilot-review` → `llm-reviewer` (CLI name assertions)
+- `DEBUG=copilot-review` → `DEBUG=llm-reviewer`
 
 - [ ] **Step 9: Apply rules to test/lib/providers/copilot-provider.test.ts**
 
@@ -276,14 +276,14 @@ git mv .copilot-review .llm-reviewer
 Apply all replacement rules. Key changes:
 - Tool name, CLI examples, config paths, env var names
 - `"Free-form Copilot chat"` → `"Free-form LLM chat"`
-- `copilot-review` → `llm-review` in all CLI examples
+- `copilot-review` → `llm-reviewer` in all CLI examples
 - `CODEREVIEWER_*` → `LLM_REVIEWER_*`
 - `~/.code-reviewer/` → `~/.llm-reviewer/`
 
 - [ ] **Step 3: Update docs/spec/README.md**
 
 - `"GitHub Copilot Reviewer"` → `"LLM Reviewer"` (title)
-- `copilot-review` → `llm-review` (CLI name)
+- `copilot-review` → `llm-reviewer` (CLI name)
 - `copilot_review` / `copilot_chat` / `copilot_models` → `llm_review` / `llm_chat` / `llm_models`
 
 - [ ] **Step 4: Update all other docs/spec/*.md files**
@@ -291,7 +291,7 @@ Apply all replacement rules. Key changes:
 Apply replacement rules to: `01-architecture.md`, `03-diff-collection.md`, `05-model-management.md`, `06-configuration.md`, `07-review-orchestration.md`, `08-cli.md`, `09-mcp-server.md`, `10-error-handling.md`, `11-formatter.md`, `14-future.md`, `15-multi-provider-and-chunked-review.md`, `16-rename-llm-reviewer.md`
 
 Key patterns:
-- `copilot-review` → `llm-review`
+- `copilot-review` → `llm-reviewer`
 - `copilot-reviewer` → `llm-reviewer`
 - `.copilot-review/` → `.llm-reviewer/`
 - `.code-reviewer/` → `.llm-reviewer/`
@@ -308,7 +308,7 @@ Same replacement rules across all plan files.
 
 - [ ] **Step 6: Update docs/adr/*.md**
 
-- `docs/adr/003-config-layering.md`: `~/.copilot-review/` → `~/.llm-reviewer/`, `copilot-review --prompt` → `llm-review --prompt`
+- `docs/adr/003-config-layering.md`: `~/.copilot-review/` → `~/.llm-reviewer/`, `copilot-review --prompt` → `llm-reviewer --prompt`
 
 - [ ] **Step 7: Update docs/scratch/*.md**
 
@@ -364,7 +364,7 @@ Expected: NO results (only provider-level references remain)
 
 ```bash
 node dist/cli.js --help
-# Should show "llm-review" and "Review code changes using LLMs"
+# Should show "llm-reviewer" and "Review code changes using LLMs"
 
 node dist/cli.js status
 # Should show ~/.llm-reviewer/ paths

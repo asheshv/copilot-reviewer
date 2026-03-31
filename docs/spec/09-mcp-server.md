@@ -190,7 +190,7 @@ Or if installed globally (uses the `--mcp` flag — see [08 — CLI](./08-cli.md
 {
   "llm-reviewer": {
     "type": "stdio",
-    "command": "llm-review",
+    "command": "llm-reviewer",
     "args": ["--mcp"]
   }
 }

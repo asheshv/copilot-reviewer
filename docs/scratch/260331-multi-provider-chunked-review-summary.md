@@ -34,12 +34,12 @@ ReviewProvider (interface)
 
 ### 2. Status Command (Phase 2)
 
-New subcommand: `llm-review status`
+New subcommand: `llm-reviewer status`
 
 Shows resolved configuration, provider health, auth state, and available models in one view. Supports `--json` for machine-readable output with full `StatusOutput` schema.
 
 ```
-$ llm-review status --provider ollama
+$ llm-reviewer status --provider ollama
   Provider:         ollama
   Model:            auto
   API reachable:    ✓ (4ms)
@@ -80,13 +80,13 @@ Enables fully local code review using any Ollama model.
 
 ```bash
 # List available Ollama models
-llm-review models --provider ollama
+llm-reviewer models --provider ollama
 
 # Review with a specific model
-llm-review local --provider ollama --model qwen2.5-coder:14b
+llm-reviewer local --provider ollama --model qwen2.5-coder:14b
 
 # With custom Ollama URL
-llm-review local --provider ollama --ollama-url http://remote:11434 --model codellama
+llm-reviewer local --provider ollama --ollama-url http://remote:11434 --model codellama
 ```
 
 **Model discovery:** Two-step — `GET /api/tags` for model names, `POST /api/show` per model for context length (falls back to 4096 if unavailable).
@@ -104,7 +104,7 @@ llm-review local --provider ollama --ollama-url http://remote:11434 --model code
 - `LLM_REVIEWER_OLLAMA_URL` — Ollama URL override
 - `LLM_REVIEWER_CHUNKING` — chunking kill switch
 
-**Config paths:** `~/.llm-reviewer/config.json` (new) with silent fallback to `~/.llm-review/` (old). Warning emitted if both exist.
+**Config paths:** `~/.llm-reviewer/config.json` (new) with silent fallback to `~/.llm-reviewer/` (old). Warning emitted if both exist.
 
 **Config merge order:** Defaults → env vars → global config → project config → CLI (env vars lose to config files — intentional design).
 
@@ -160,9 +160,9 @@ Key coverage areas:
 ### End-to-End Verification
 
 Tested against real Ollama instance with `qwen2.5-coder:14b` and `qwen2.5-coder:32b`:
-- `llm-review models --provider ollama` — lists models with context lengths
-- `llm-review status --provider ollama` — shows health, latency, model list
-- `llm-review commits 1 --provider ollama --model qwen2.5-coder:14b` — full review with chunking (model has 4096 context → auto-chunks)
+- `llm-reviewer models --provider ollama` — lists models with context lengths
+- `llm-reviewer status --provider ollama` — shows health, latency, model list
+- `llm-reviewer commits 1 --provider ollama --model qwen2.5-coder:14b` — full review with chunking (model has 4096 context → auto-chunks)
 
 ---
 

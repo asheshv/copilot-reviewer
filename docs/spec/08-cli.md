@@ -6,12 +6,12 @@
 
 ## Binary Name
 
-`llm-review` — registered in `package.json` `bin` field.
+`llm-reviewer` — registered in `package.json` `bin` field.
 
 ## Usage
 
 ```
-llm-review [mode] [options]
+llm-reviewer [mode] [options]
 
 Modes (default: local):
   unstaged              Working tree vs index
@@ -34,8 +34,8 @@ Options:
   --version          Show version
 
 Subcommands:
-  llm-review models          List available models
-  llm-review chat "<msg>"    Free-form LLM chat
+  llm-reviewer models          List available models
+  llm-reviewer chat "<msg>"    Free-form LLM chat
 ```
 
 ## Exit Codes
@@ -43,7 +43,7 @@ Subcommands:
 | Code | Meaning | Use case |
 |------|---------|----------|
 | 0 | Success — no HIGH severity issues | Normal completion |
-| 1 | Review completed with HIGH severity findings | CI gating: `llm-review branch main \|\| exit 1` |
+| 1 | Review completed with HIGH severity findings | CI gating: `llm-reviewer branch main \|\| exit 1` |
 | 2 | Auth failure | See [02 — Authentication](./02-authentication.md) |
 | 3 | Diff error (empty, not a git repo, etc.) | See [03 — Diff Collection](./03-diff-collection.md) |
 | 4 | API/model error (rate limit, server error) | See [10 — Error Handling](./10-error-handling.md) |
@@ -60,7 +60,7 @@ Exit code 1 enables CI integration without extra scripting.
 | **stdout** | Review content only (all formats) |
 | **stderr** | Progress messages, warnings, errors |
 
-This separation enables clean piping: `llm-review branch main > review.md`.
+This separation enables clean piping: `llm-reviewer branch main > review.md`.
 
 ### Progress Messages (stderr)
 
@@ -102,11 +102,11 @@ Explicit `--format` always overrides TTY detection.
 
 ## Subcommands
 
-### `llm-review models`
+### `llm-reviewer models`
 
 Lists available models. See [05 — Model Management](./05-model-management.md).
 
-### `llm-review chat "<message>"`
+### `llm-reviewer chat "<message>"`
 
 Free-form LLM chat. **Single-turn only** — send message, print response, exit. Not an interactive chat loop. Uses the same auth and client infrastructure.
 
@@ -116,11 +116,11 @@ For multi-turn conversations, use a full MCP client (which can call the `llm_cha
 
 ## Default Mode
 
-`llm-review` with no mode argument defaults to `local` mode (equivalent to `llm-review local`). This is the most common use case: "show me what I've been working on."
+`llm-reviewer` with no mode argument defaults to `local` mode (equivalent to `llm-reviewer local`). This is the most common use case: "show me what I've been working on."
 
 ## Verbose / Debug Mode
 
-`--verbose` flag or `DEBUG=llm-review` environment variable enables debug logging to stderr. See [07 — Review Orchestration](./07-review-orchestration.md) for what's logged.
+`--verbose` flag or `DEBUG=llm-reviewer` environment variable enables debug logging to stderr. See [07 — Review Orchestration](./07-review-orchestration.md) for what's logged.
 
 ## Argument Parser
 
@@ -128,7 +128,7 @@ For multi-turn conversations, use a full MCP client (which can call the `llm_cha
 
 ## Entry Point Modes
 
-The `llm-review` binary can run in two modes:
+The `llm-reviewer` binary can run in two modes:
 - **Default:** CLI review tool (this spec)
 - **`--mcp`:** Start as MCP server (see [09 — MCP Server](./09-mcp-server.md))
 

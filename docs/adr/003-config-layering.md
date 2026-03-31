@@ -47,7 +47,7 @@ Some projects need fundamentally different review criteria (e.g., a data pipelin
 
 - **Single config file (YAML/TOML)** — one file per layer with prompt inline. Rejected: prose in YAML is awkward, and it couples structured settings with free-form text.
 - **Only extend, never replace** — simpler but too rigid. Some projects genuinely need different prompts.
-- **Environment variable overrides** — considered for CI. Deferred: CLI flags cover CI use cases (`llm-review --prompt "..."` in a pipeline).
+- **Environment variable overrides** — considered for CI. Deferred: CLI flags cover CI use cases (`llm-reviewer --prompt "..."` in a pipeline).
 
 ## Consequences
 

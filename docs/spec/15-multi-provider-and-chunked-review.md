@@ -22,7 +22,7 @@ This spec introduces two related capabilities:
 
 - Runtime plugin loading (file-based or npm-based) — built-in providers only for now.
 - Independently configurable model for the reduce (aggregation) pass — deferred to a future enhancement.
-- Renaming the project from `llm-review` — cosmetic, deferred.
+- ~~Renaming the project~~ — completed (see spec 16). Now `llm-reviewer`.
 
 ---
 
@@ -434,17 +434,7 @@ New paths:
 - **Global**: `~/.llm-reviewer/config.json`
 - **Project**: `<git-root>/.llm-reviewer/config.json`
 
-Backward compatibility: if the new path does not exist, fall back to the old path (`~/.llm-review/`). New path takes precedence if both exist. Fallback is **file-level** — the entire config file is loaded from one path or the other, never merged field-by-field across both paths.
-
-**Migration risk assessment:** We considered the risk of silent config loss when both `~/.llm-reviewer/` and `~/.llm-review/` exist. The precedence rule (new path wins) is deterministic, but a user who manually edits the old path after the new one was auto-created would see their changes ignored without any feedback.
-
-Mitigations:
-- The `status` command shows exactly which config file is loaded and whether the fallback path exists, making debugging straightforward.
-- The tool **never auto-creates** config directories — users create them explicitly. This eliminates the "auto-created new path shadows old path" scenario.
-- If both paths exist, the `status` command shows: `Config (global): ~/.llm-reviewer/config.json (found, note: ~/.llm-review/config.json also exists — ignored)`.
-- Additionally, during normal `review` invocation, if both paths exist, emit a **one-time warning to stderr**: `"Warning: both ~/.llm-reviewer/ and ~/.llm-review/ exist. Using ~/.llm-reviewer/. Run 'llm-review status' for details."` This is NOT silent — it surfaces the shadowing during actual use, not just in the diagnostic command.
-
-A future migration tool or deprecation warning is out of scope but documented in Section 9.
+No backward-compat fallback chain. Single path only: `~/.llm-reviewer/` (global) and `<git-root>/.llm-reviewer/` (project). Config fallback to old paths (`~/.copilot-review/`, `~/.code-reviewer/`) was removed during the v1.0.0 rename (see spec 16).
 
 ### Config Merge Order (updated)
 
@@ -462,12 +452,11 @@ Layer  Source                         Fields affected
 3b     LLM_REVIEWER_CHUNKING env     chunking only (kill switch: "never" disables chunking)
 4      Global config file             all ConfigFile fields (provider, model, format,
        ~/.llm-reviewer/config.json   stream, prompt, defaultBase, ignorePaths, chunking,
-       (fallback: ~/.llm-review/) providerOptions, mode)
+                                      providerOptions, mode)
                                       URL fields (providerOptions.ollama.baseUrl) validated
                                       at config load time, same as env vars
 5      Project config file            same as layer 4
        <git-root>/.llm-reviewer/
-       (fallback: .llm-review/)
 6      CLI overrides                  --provider, --model, --format, --stream/--no-stream,
                                       --prompt, --chunking, --ollama-url, --config
 ```
@@ -492,16 +481,16 @@ Result:  { providerOptions: { ollama: { baseUrl: "http://localhost:11434" } } }
 --ollama-url <url>      Ollama base URL (shorthand for providerOptions.ollama.baseUrl)
 ```
 
-The existing `llm-review models` subcommand becomes provider-aware: `llm-review models --provider ollama` lists Ollama models. Defaults to the configured provider.
+The existing `llm-reviewer models` subcommand becomes provider-aware: `llm-reviewer models --provider ollama` lists Ollama models. Defaults to the configured provider.
 
 ### Status Command
 
-New subcommand: `llm-review status`
+New subcommand: `llm-reviewer status`
 
 Displays resolved configuration and provider health in a single view. Useful for debugging setup issues and confirming what the tool will use before running a review.
 
 ```
-$ llm-review status
+$ llm-reviewer status
 
   Provider:       copilot
   Model:          auto → gpt-4.1 (auto-selected)
@@ -509,13 +498,13 @@ $ llm-review status
   Stream:         true
   Format:         markdown
   Config (global): ~/.llm-reviewer/config.json (found)
-  Config (project): /repo/.llm-reviewer/config.json (not found, fallback: .llm-review/ not found)
+  Config (project): /repo/.llm-reviewer/config.json (not found)
   Auth:           GitHub token (gh CLI) ✓
   API reachable:  ✓ (245ms)
 ```
 
 ```
-$ llm-review status --provider ollama
+$ llm-reviewer status --provider ollama
 
   Provider:       ollama
   Model:          (not set — required, use --model)
@@ -531,7 +520,7 @@ $ llm-review status --provider ollama
 ```
 
 ```
-$ llm-review status --provider ollama
+$ llm-reviewer status --provider ollama
 
   Provider:       ollama
   ...
@@ -616,7 +605,7 @@ chunking = "never":   → current behavior, throw ReviewError if diff too large
                          production, set chunking: "never" globally or per-project to disable
                          it entirely with zero code changes. The LLM_REVIEWER_CHUNKING env var
                          provides the same kill switch without config file changes:
-                           LLM_REVIEWER_CHUNKING=never llm-review local
+                           LLM_REVIEWER_CHUNKING=never llm-reviewer local
 ```
 
 **Important:** The 80% threshold is always evaluated against the **resolved** model's `maxPromptTokens`, never against `model: "auto"`. Model resolution (auto-select or explicit validation) must complete before the chunking decision is made. This is the same ordering as the current pipeline — `resolveModel()` runs before `checkTokenBudget()`.
@@ -624,10 +613,10 @@ chunking = "never":   → current behavior, throw ReviewError if diff too large
 **Model resolution failure:** If model resolution fails (auto-select API error, model not found), the review fails immediately with `ModelError` — same as current behavior. Chunking is never attempted without a resolved model. There is no fallback to a default `maxPromptTokens`.
 
 **Model resolution with providers that lack auto-select (e.g., Ollama):**
-- `model: "auto"` + Ollama → `resolveModel()` checks `provider.autoSelect` → absent → throws `ConfigError("model_required", "Provider 'ollama' requires an explicit model. Use --model or set model in config. Run 'llm-review models --provider ollama' to see available models.")`
+- `model: "auto"` + Ollama → `resolveModel()` checks `provider.autoSelect` → absent → throws `ConfigError("model_required", "Provider 'ollama' requires an explicit model. Use --model or set model in config. Run 'llm-reviewer models --provider ollama' to see available models.")`
 - This check happens early in the review pipeline, before diff collection or chunking.
 - The `status` command also surfaces this: `Model: (not set — required, use --model)`
-- CLI example: `llm-review --provider ollama` without `--model` → same error, exit code 5 (CONFIG_ERROR).
+- CLI example: `llm-reviewer --provider ollama` without `--model` → same error, exit code 5 (CONFIG_ERROR).
 
 **Expected behavior:** With modern models (128k+ context), the vast majority of reviews (~70-80% for typical PRs) will fit in a single pass. Chunking primarily benefits large refactors, dependency updates, or reviews against smaller-context local models (e.g., Ollama with 8k-32k models). The `chunking: "auto"` default ensures zero overhead for the common case.
 
@@ -1056,7 +1045,7 @@ src/lib/
 |----------|-------------|------|---------|
 | Unknown provider name | `ConfigError` | `unknown_provider` | "Unknown provider '{name}'. Available: copilot, ollama" |
 | Ollama unreachable | `ClientError` | `provider_unavailable` | "Cannot reach Ollama at {url}. Is it running?" |
-| Ollama model not found | `ModelError` | `model_not_found` | "Model '{id}' not found on Ollama. Run `llm-review models --provider ollama` to see available models." |
+| Ollama model not found | `ModelError` | `model_not_found` | "Model '{id}' not found on Ollama. Run `llm-reviewer models --provider ollama` to see available models." |
 | No model specified, provider lacks auto-select | `ConfigError` | `model_required` | "Provider '{name}' requires an explicit model. Use --model or set in config." |
 | Chunk N fails | `ReviewError` | `chunk_failed` | "Review failed on chunk {n}/{total} (files: [...]): {cause}" |
 | Reduce pass fails | `ReviewError` | `reduce_failed` | "Aggregation pass failed: {cause}". Since map-phase findings were already collected, include them as a fallback: concatenate raw chunk findings with chunk headers, prepended with `"⚠ Aggregation failed — raw per-chunk findings below (may contain duplicates):\n\n"`. The formatter adds `(unaggregate)` to the output header. This is better than losing all work, and the explicit labeling prevents users from mistaking it for a clean review. |
@@ -1219,10 +1208,10 @@ For `OpenAIChatProvider` base class testing, use a concrete test subclass with `
 - **Independently configurable reduce model** — allow a different (smaller/cheaper) model for the aggregation pass.
 - **Runtime plugin loading** — file-based or npm-based provider plugins.
 - **Parallel chunk execution** — configurable concurrency for providers that support it.
-- **Project rename** — `llm-review` → provider-neutral name.
+- ~~**Project rename**~~ — completed. Now `llm-reviewer`.
 - **Anthropic provider** — implement `ReviewProvider` directly (non-OpenAI protocol).
-- **Config migration tooling** — `llm-review migrate-config` to move `~/.llm-review/` → `~/.llm-reviewer/` with deprecation warnings when old paths are detected.
-- **File/directory scoped review** — `llm-review local --path src/lib/auth.ts` or `--path src/lib/` to review only specific files or directories, filtering the diff to matching paths before sending to the provider.
+- **Config migration tooling** — `llm-reviewer migrate-config` to help users move from old config paths (`~/.copilot-review/`, `~/.code-reviewer/`) to `~/.llm-reviewer/`.
+- **File/directory scoped review** — `llm-reviewer local --path src/lib/auth.ts` or `--path src/lib/` to review only specific files or directories, filtering the diff to matching paths before sending to the provider.
 
 ---
 

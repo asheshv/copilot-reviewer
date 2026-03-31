@@ -65,7 +65,7 @@ git commit -m "chore: final verification cleanup"
 
 At this point you have:
 - 12 source modules with full test coverage
-- CLI binary (`llm-review`) with 7 diff modes, 3 subcommands
+- CLI binary (`llm-reviewer`) with 7 diff modes, 3 subcommands
 - MCP server with 3 tools (`llm_review`, `llm_chat`, `llm_models`)
 - 4-layer configuration with extend/replace prompt merging
 - Opinionated default review prompt (Security > Correctness > Performance > Readability > Simplicity)
