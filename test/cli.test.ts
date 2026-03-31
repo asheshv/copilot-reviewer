@@ -59,6 +59,7 @@ vi.mock("../src/lib/config.js", () => ({
 
 vi.mock("../src/lib/providers/index.js", () => ({
   createProvider: vi.fn().mockResolvedValue(mockProvider),
+  constructProvider: vi.fn().mockReturnValue(mockProvider),
   availableProviders: vi.fn().mockReturnValue(["copilot"]),
 }));
 
@@ -708,8 +709,8 @@ describe("CLI", () => {
     it("handles provider without autoSelect — no resolution attempt", async () => {
       // Remove autoSelect from provider
       const { autoSelect, ...providerWithoutAutoSelect } = mockProvider;
-      const { createProvider: mockCreateProvider } = await import("../src/lib/providers/index.js");
-      (mockCreateProvider as ReturnType<typeof vi.fn>).mockResolvedValueOnce(providerWithoutAutoSelect);
+      const { constructProvider: mockConstruct } = await import("../src/lib/providers/index.js");
+      (mockConstruct as ReturnType<typeof vi.fn>).mockReturnValueOnce(providerWithoutAutoSelect);
 
       mockLoadConfig.mockResolvedValue(makeConfig({ model: "auto" }));
 
@@ -750,21 +751,21 @@ describe("CLI", () => {
       expect(parsed.modelsError).toContain("rate limited");
     });
 
-    it("returns exit 1 when createProvider throws AuthError", async () => {
-      const { createProvider: mockCreateProvider } = await import("../src/lib/providers/index.js");
-      (mockCreateProvider as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new AuthError("no_token", "no GitHub token found", false),
-      );
+    it("returns exit 1 when constructProvider throws (unknown provider)", async () => {
+      const { constructProvider: mockConstruct } = await import("../src/lib/providers/index.js");
+      (mockConstruct as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+        throw new AuthError("no_token", "no GitHub token found", false);
+      });
 
       const code = await handleStatus({});
       expect(code).toBe(1);
     });
 
-    it("--json has healthy: false and api.reachable: false when createProvider throws AuthError", async () => {
-      const { createProvider: mockCreateProvider } = await import("../src/lib/providers/index.js");
-      (mockCreateProvider as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-        new AuthError("no_token", "no GitHub token found", false),
-      );
+    it("--json has healthy: false and api.reachable: false when constructProvider throws", async () => {
+      const { constructProvider: mockConstruct } = await import("../src/lib/providers/index.js");
+      (mockConstruct as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+        throw new AuthError("no_token", "no GitHub token found", false);
+      });
 
       const code = await handleStatus({ json: true });
 

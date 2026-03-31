@@ -10,7 +10,7 @@ export { createDefaultAuthProvider, getAuthenticatedHeaders, resolveToken, excha
 export { parseSSEStream, parseChatCompletionChunk, parseResponsesChunk } from "./streaming.js";
 
 // Providers
-export { createProvider, availableProviders } from "./providers/index.js";
+export { createProvider, constructProvider, availableProviders } from "./providers/index.js";
 export type { ReviewProvider } from "./providers/types.js";
 export { CopilotProvider } from "./providers/copilot-provider.js";
 export { OpenAIChatProvider } from "./providers/openai-chat-provider.js";

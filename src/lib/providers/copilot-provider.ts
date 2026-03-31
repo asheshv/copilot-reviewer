@@ -119,8 +119,10 @@ export class CopilotProvider extends OpenAIChatProvider {
       });
       clearTimeout(timeoutId);
       const latencyMs = Date.now() - start;
-      if (response.status === 401) {
-        return { ok: false, latencyMs, error: "not_initialized" };
+      // 400/401 from Copilot means the API is reachable but we didn't send auth
+      // (healthCheck is designed to work before initialize). Treat as reachable.
+      if (response.status === 400 || response.status === 401) {
+        return { ok: true, latencyMs };
       }
       return {
         ok: response.ok,

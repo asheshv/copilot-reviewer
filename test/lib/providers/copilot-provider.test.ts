@@ -252,7 +252,7 @@ describe("CopilotProvider", () => {
       expect(result.error).toBeDefined();
     });
 
-    it("returns ok:false with error 'not_initialized' on 401", async () => {
+    it("returns ok:true on 400/401 (API reachable, just not authenticated)", async () => {
       server.use(
         http.get("https://api.githubcopilot.com/models", () => {
           return new HttpResponse(null, { status: 401 });
@@ -262,8 +262,9 @@ describe("CopilotProvider", () => {
       const provider = new CopilotProvider(authProvider);
       const result = await provider.healthCheck();
 
-      expect(result.ok).toBe(false);
-      expect(result.error).toBe("not_initialized");
+      // 400/401 means API is reachable — healthCheck runs before initialize (no auth headers)
+      expect(result.ok).toBe(true);
+      expect(result.error).toBeUndefined();
       expect(typeof result.latencyMs).toBe("number");
     });
 

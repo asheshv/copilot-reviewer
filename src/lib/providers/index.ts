@@ -18,6 +18,24 @@ const PROVIDERS: Record<string, ProviderFactory> = {
   },
 };
 
+/**
+ * Construct a provider without calling initialize().
+ * Used by the status command to run healthCheck() before full initialization.
+ */
+export function constructProvider(config: ResolvedConfig): ReviewProvider {
+  const factory = PROVIDERS[config.provider];
+  if (!factory) {
+    const available = Object.keys(PROVIDERS).join(", ");
+    throw new ConfigError(
+      "unknown_provider",
+      `Unknown provider '${config.provider}'. Available: ${available}. Check your config file or --provider flag.`,
+      "",
+      false
+    );
+  }
+  return factory(config);
+}
+
 export async function createProvider(config: ResolvedConfig): Promise<ReviewProvider> {
   const factory = PROVIDERS[config.provider];
   if (!factory) {

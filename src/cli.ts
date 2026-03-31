@@ -17,7 +17,7 @@ import {
 } from "./lib/index.js";
 import { loadConfig } from "./lib/config.js";
 import { resolveToken } from "./lib/auth.js";
-import { createProvider } from "./lib/providers/index.js";
+import { createProvider, constructProvider } from "./lib/providers/index.js";
 import type { StatusOutput } from "./lib/types.js";
 import { review, reviewStream } from "./lib/review.js";
 import { detectHighSeverity, formatNdjsonChunk } from "./lib/formatter.js";
@@ -447,19 +447,19 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
     // Config paths
     const configInfo = await resolveConfigStatus();
 
-    // Provider health check
+    // Construct provider WITHOUT initialize() — status should diagnose, not fail
     let apiResult: StatusOutput["api"] = {
       reachable: false,
       latencyMs: null,
-      error: "provider not initialized",
+      error: "unknown provider",
     };
-    let provider: Awaited<ReturnType<typeof createProvider>> | null = null;
+    let provider: ReturnType<typeof constructProvider> | null = null;
     let healthy = auth.valid;
 
     try {
-      provider = await createProvider(config);
+      provider = constructProvider(config);
     } catch (err) {
-      // Provider creation failed — skip health check
+      // Unknown provider name — report but continue
       apiResult = {
         reachable: false,
         latencyMs: null,
@@ -468,28 +468,32 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
       healthy = false;
     }
 
+    // Health check (works without initialize — just checks reachability)
     if (provider) {
+      const health = await provider.healthCheck();
+      apiResult = {
+        reachable: health.ok,
+        latencyMs: health.latencyMs,
+        error: health.error,
+      };
+      if (!health.ok) healthy = false;
+    }
+
+    // Try to initialize the provider (needed for model listing / auto-select)
+    // This may fail (e.g., token exchange) — that's fine, we still report what we can
+    let initialized = false;
+    if (provider && apiResult.reachable) {
       try {
-        const health = await provider.healthCheck();
-        apiResult = {
-          reachable: health.ok,
-          latencyMs: health.latencyMs,
-          error: health.error,
-        };
-        if (!health.ok) healthy = false;
-      } catch (err) {
-        apiResult = {
-          reachable: false,
-          latencyMs: null,
-          error: err instanceof Error ? err.message : String(err),
-        };
-        healthy = false;
+        await provider.initialize();
+        initialized = true;
+      } catch {
+        // initialize failed — model listing/auto-select won't work, but health check already passed
       }
     }
 
-    // Model resolution
+    // Model resolution (only if initialized)
     let resolvedModel: string | null = null;
-    if (provider && apiResult.reachable && config.model === "auto" && provider.autoSelect) {
+    if (initialized && provider && config.model === "auto" && provider.autoSelect) {
       try {
         resolvedModel = await provider.autoSelect();
       } catch {
@@ -497,17 +501,18 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
       }
     }
 
-    // List models (only when reachable)
+    // List models (only if initialized)
     let models: string[] | null = null;
     let modelsError: string | null = null;
-    if (provider && apiResult.reachable) {
+    if (initialized && provider) {
       try {
         const list = await provider.listModels();
         models = list.map((m) => m.id);
       } catch (err) {
         modelsError = err instanceof Error ? err.message : String(err);
-        healthy = false;
       }
+    } else if (provider && apiResult.reachable && !initialized) {
+      modelsError = "Provider reachable but initialization failed (token exchange or auth issue)";
     }
 
     const output: StatusOutput = {
