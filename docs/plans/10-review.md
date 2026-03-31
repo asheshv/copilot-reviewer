@@ -98,7 +98,7 @@ CLI and MCP server construct `CopilotClient` + `ModelManager` and pass them in. 
 
 ### Logging
 
-When `options.config` includes a verbose flag (or `DEBUG=copilot-review` env var is set), log to stderr:
+When `options.config` includes a verbose flag (or `DEBUG=llm-review` env var is set), log to stderr:
 - Resolved config (tokens redacted)
 - Auth token source and expiry
 - API request URL, method, headers (Authorization redacted)

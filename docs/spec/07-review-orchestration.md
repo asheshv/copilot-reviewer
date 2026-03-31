@@ -176,11 +176,11 @@ Warnings are computed in steps 1-3 (before the stream starts). The CLI emits the
 If Copilot returns an empty `content` string (no findings), this is NOT an error:
 - Exit code: 0 (no HIGH severity findings detected)
 - Formatter outputs normally with empty findings section
-- A note "Copilot returned no findings." is added to `warnings` array
+- A note "Provider returned no findings." is added to `warnings` array
 
 ## Logging
 
-When `--verbose` is set or `DEBUG=copilot-review` env var is present:
+When `--verbose` is set or `DEBUG=llm-review` env var is present:
 - Log resolved config (with token values redacted)
 - Log auth token source and expiry time
 - Log API request URL, method, and headers (with Authorization redacted)

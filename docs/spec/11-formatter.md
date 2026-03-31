@@ -19,7 +19,7 @@ format(result: ReviewResult, fmt: "text" | "markdown" | "json"): string
 ### Markdown (default for terminal)
 
 ```markdown
-# Copilot Code Review
+# LLM Code Review
 
 **Model:** gpt-4.1 | **Files:** 5 | **+120 -45**
 
@@ -36,7 +36,7 @@ Thin header with metadata, Copilot's response verbatim, thin footer with usage.
 ### Text (plain, no markup)
 
 ```
-Copilot Code Review
+LLM Code Review
 Model: gpt-4.1 | Files: 5 | +120 -45
 
 <copilot's review content — markdown syntax stripped>

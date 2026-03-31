@@ -6,7 +6,7 @@
 
 ## Overview
 
-The MCP server exposes Copilot capabilities as tools consumable by any MCP-compatible AI agent (Claude Code, Cursor, Zed, Cline, etc.). It imports `lib/` directly — no process spawning.
+The MCP server exposes LLM capabilities as tools consumable by any MCP-compatible AI agent (Claude Code, Cursor, Zed, Cline, etc.). It imports `lib/` directly — no process spawning.
 
 ## Transport
 
@@ -14,9 +14,9 @@ The MCP server exposes Copilot capabilities as tools consumable by any MCP-compa
 
 ## Tools
 
-### `copilot_review`
+### `llm_review`
 
-Review code changes using GitHub Copilot.
+Review code changes using LLMs.
 
 **Parameters:**
 
@@ -64,9 +64,9 @@ See [10 — Error Handling](./10-error-handling.md) for all error codes.
 
 ---
 
-### `copilot_chat`
+### `llm_chat`
 
-Chat with GitHub Copilot about code.
+Chat with LLM about code.
 
 **Parameters:**
 
@@ -95,9 +95,9 @@ The optional `context` parameter lets agents pass in file contents or code snipp
 
 ---
 
-### `copilot_models`
+### `llm_models`
 
-List available GitHub Copilot models.
+List available LLM models.
 
 **Parameters:** none
 
@@ -153,7 +153,7 @@ Tool definitions should use JSON Schema `enum` constraints for `mode` to prevent
 The MCP server bridges flat tool parameters to `ReviewOptions`:
 
 ```typescript
-// copilot_review tool handler:
+// llm_review tool handler:
 const config = loadConfig({ prompt: params.prompt, model: params.model });
 const reviewOptions: ReviewOptions = {
   diff: {
@@ -176,7 +176,7 @@ For consumers to register this server:
 
 ```json
 {
-  "copilot-reviewer": {
+  "llm-reviewer": {
     "type": "stdio",
     "command": "node",
     "args": ["path/to/dist/mcp-server.js"]
@@ -188,9 +188,9 @@ Or if installed globally (uses the `--mcp` flag — see [08 — CLI](./08-cli.md
 
 ```json
 {
-  "copilot-reviewer": {
+  "llm-reviewer": {
     "type": "stdio",
-    "command": "copilot-review",
+    "command": "llm-review",
     "args": ["--mcp"]
   }
 }

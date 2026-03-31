@@ -132,7 +132,7 @@ Two exports:
 `loadConfig(cliOverrides?: CLIOverrides): ResolvedConfig`:
 
 1. Start with built-in defaults (calls `loadBuiltInPrompt()` for Layer 1 prompt)
-2. Load global config from `os.homedir() + "/.copilot-review/"` — read `config.json` + `config.md`
+2. Load global config from `os.homedir() + "/.llm-reviewer/"` — read `config.json` + `config.md`
 3. Load project config: detect git root by spawning `git rev-parse --show-toplevel`. If command fails (exit code != 0) or stdout is empty → skip project layer silently (allows use outside git repos). If `cliOverrides.config` is provided, use that path instead of git root detection.
 4. Apply CLI overrides (Layer 4)
 5. Merge structured settings: last-layer-wins for model/format/stream/defaultBase

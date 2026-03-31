@@ -26,7 +26,7 @@ describe("CLI", () => {
     it("parses --prompt flag");
     it("parses --config flag");
     it("parses --verbose flag");
-    it("DEBUG=copilot-review env var enables verbose mode");
+    it("DEBUG=llm-review env var enables verbose mode");
   });
 
   describe("exit codes", () => {
@@ -79,7 +79,7 @@ Use `commander` for argument parsing:
 
 ```typescript
 const program = new Command()
-  .name("copilot-review")
+  .name("llm-review")
   .version(VERSION)
   .description("Review code changes using GitHub Copilot");
 
@@ -111,7 +111,7 @@ if (opts.mcp) {
 }
 ```
 
-Verbose mode: check both `opts.verbose` and `process.env.DEBUG === "copilot-review"`.
+Verbose mode: check both `opts.verbose` and `process.env.DEBUG === "llm-review"`.
 
 Handler functions:
 - `handleReview()`: load config → create auth/client/models → call `review()` or `reviewStream()` → output to stdout → map errors to exit codes

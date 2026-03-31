@@ -9,7 +9,7 @@
 All errors extend a base class:
 
 ```typescript
-class CopilotReviewError extends Error {
+class LlmReviewError extends Error {
   code: string;              // machine-readable
   message: string;           // human-readable, actionable
   recoverable: boolean;      // should caller retry?
@@ -165,7 +165,7 @@ Every error message tells the user what went wrong AND what to do about it:
 | `no_commits` | "No commits in this repository yet. Make an initial commit before reviewing changes." |
 | `invalid_parameter` | "Invalid mode 'xyz'. Valid: unstaged, staged, local, branch, pr, commits, range" |
 | `missing_parameter` | "Mode 'pr' requires 'pr' parameter (PR number)" |
-| `malformed_json` | "Failed to parse config: ~/.copilot-review/config.json — Unexpected token at line 5." |
+| `malformed_json` | "Failed to parse config: ~/.llm-reviewer/config.json — Unexpected token at line 5." |
 
 ## Design Principle
 

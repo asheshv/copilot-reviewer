@@ -1,34 +1,34 @@
-# copilot-review
+# llm-review
 
-Review code changes using GitHub Copilot — CLI + MCP server for any AI agent.
+Review code changes using LLMs — CLI + MCP server for any AI agent.
 
 ## Installation
 
 ```bash
 # Install globally from GitHub (pinned to latest release)
-npm install -g github:asheshv/copilot-reviewer#v0.1.0
+npm install -g github:asheshv/llm-reviewer#v1.0.0
 
 # Or use without installing:
-npx github:asheshv/copilot-reviewer#v0.1.0 --help
+npx github:asheshv/llm-reviewer#v1.0.0 --help
 ```
 
 ## Quick Start
 
 ```bash
 # Review uncommitted local changes
-copilot-review
+llm-review
 
 # Review changes in a feature branch vs main
-copilot-review branch main
+llm-review branch main
 
 # Review a pull request
-copilot-review pr 123
+llm-review pr 123
 ```
 
 ## CLI Usage
 
 ```
-copilot-review [mode] [options]
+llm-review [mode] [options]
 
 Modes (default: local):
   unstaged              Working tree vs index
@@ -51,32 +51,32 @@ Options:
   --version          Show version
 
 Subcommands:
-  copilot-review models          List available models
-  copilot-review chat "<msg>"    Free-form Copilot chat
+  llm-review models          List available models
+  llm-review chat "<msg>"    Free-form LLM chat
 ```
 
 ### Examples
 
 ```bash
 # Review staged changes before committing
-copilot-review staged
+llm-review staged
 
 # Review the last 3 commits
-copilot-review commits 3
+llm-review commits 3
 
 # Review a ref range
-copilot-review range v1.0.0..HEAD
+llm-review range v1.0.0..HEAD
 
 # Use a specific model with JSON output
-copilot-review branch main --model gpt-4.1 --format json
+llm-review branch main --model gpt-4.1 --format json
 
 # Custom review instructions
-copilot-review --prompt "Focus on security and error handling"
+llm-review --prompt "Focus on security and error handling"
 ```
 
 ## MCP Server Setup
 
-The MCP server exposes Copilot as tools for AI agents (Claude Code, Cursor, Zed, Cline, etc.).
+The MCP server exposes LLM review capabilities as tools for AI agents (Claude Code, Cursor, Zed, Cline, etc.).
 
 ### For Claude Code
 
@@ -85,8 +85,8 @@ Add to `.mcp.json` in your project root or `~/.config/claude/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "copilot-reviewer": {
-      "command": "copilot-review",
+    "llm-reviewer": {
+      "command": "llm-review",
       "args": ["--mcp"]
     }
   }
@@ -97,9 +97,9 @@ Add to `.mcp.json` in your project root or `~/.config/claude/mcp.json`:
 
 ```json
 {
-  "copilot-reviewer": {
+  "llm-reviewer": {
     "type": "stdio",
-    "command": "copilot-review",
+    "command": "llm-review",
     "args": ["--mcp"]
   }
 }
@@ -109,27 +109,27 @@ Or if using locally (not installed globally):
 
 ```json
 {
-  "copilot-reviewer": {
+  "llm-reviewer": {
     "type": "stdio",
     "command": "node",
-    "args": ["/absolute/path/to/copilot-reviewer/dist/cli.js", "--mcp"]
+    "args": ["/absolute/path/to/llm-reviewer/dist/cli.js", "--mcp"]
   }
 }
 ```
 
 ### Available MCP Tools
 
-- `copilot_review` — Review code changes (all 7 modes supported)
-- `copilot_chat` — Free-form chat with Copilot (with optional code context)
-- `copilot_models` — List available models
+- `llm_review` — Review code changes (all 7 modes supported)
+- `llm_chat` — Free-form chat with LLM (with optional code context)
+- `llm_models` — List available models
 
 ## Configuration
 
 Configuration is loaded from four layers (lowest to highest precedence):
 
 1. **Built-in defaults** — Ships with the tool
-2. **Global config** — `~/.copilot-review/config.json` or `config.md`
-3. **Project config** — `<git-root>/.copilot-review/config.json` or `config.md`
+2. **Global config** — `~/.llm-reviewer/config.json` or `config.md`
+3. **Project config** — `<git-root>/.llm-reviewer/config.json` or `config.md`
 4. **CLI flags** — `--model`, `--format`, `--prompt` (highest precedence)
 
 ### config.json Schema
@@ -188,10 +188,10 @@ Example multi-layer merge (all using `"extend"`):
 [Default prompt from prompts/default-review.md]
 
 ## Additional Instructions (Global)
-[Global ~/.copilot-review/config.md]
+[Global ~/.llm-reviewer/config.md]
 
 ## Project Instructions
-[Project .copilot-review/config.md]
+[Project .llm-reviewer/config.md]
 ```
 
 If project config uses `"mode": "replace"`, only the project prompt is used.
@@ -199,7 +199,7 @@ If project config uses `"mode": "replace"`, only the project prompt is used.
 CLI `--prompt` flag always replaces everything:
 
 ```bash
-copilot-review --prompt "Only check for SQL injection"
+llm-review --prompt "Only check for SQL injection"
 ```
 
 ## Default Review Prompt
@@ -214,7 +214,7 @@ The built-in prompt checks code changes in priority order:
 
 Findings are categorized as HIGH, MEDIUM, or LOW severity. Security issues are always HIGH.
 
-To customize, add a `config.md` file in `~/.copilot-review/` (global) or `<git-root>/.copilot-review/` (project).
+To customize, add a `config.md` file in `~/.llm-reviewer/` (global) or `<git-root>/.llm-reviewer/` (project).
 
 ## Output Formats
 
@@ -264,7 +264,7 @@ Complete structured output in a single JSON object:
 Use `--stream --format json` for newline-delimited JSON stream:
 
 ```bash
-copilot-review --stream --format json | while read line; do
+llm-review --stream --format json | while read line; do
   echo "$line" | jq -r '.text // empty'
 done
 ```
@@ -276,7 +276,7 @@ Each line is a valid JSON object. Enables real-time machine consumption of strea
 | Code | Meaning | Use Case |
 |------|---------|----------|
 | 0 | Success — no HIGH severity issues | Normal completion |
-| 1 | Review completed with HIGH findings | CI gating: `copilot-review branch main \|\| exit 1` |
+| 1 | Review completed with HIGH findings | CI gating: `llm-review branch main \|\| exit 1` |
 | 2 | Authentication failure | No GitHub token found |
 | 3 | Diff error | Empty diff, not a git repo, etc. |
 | 4 | API/model error | Rate limit, server error, model unavailable |
@@ -286,10 +286,10 @@ Each line is a valid JSON object. Enables real-time machine consumption of strea
 
 ```bash
 # Fail the build if high-severity issues are found
-copilot-review branch main || exit 1
+llm-review branch main || exit 1
 
 # Or capture the exit code
-copilot-review branch main
+llm-review branch main
 if [ $? -eq 1 ]; then
   echo "High-severity issues found. Please review."
   exit 1
@@ -303,7 +303,7 @@ GitHub token is resolved in priority order. First match wins.
 1. **`$GITHUB_TOKEN` environment variable**
    ```bash
    export GITHUB_TOKEN="ghp_xxxxxxxxxxxx"
-   copilot-review
+   llm-review
    ```
 
 2. **Copilot config files** (created by editor extensions)
@@ -313,7 +313,7 @@ GitHub token is resolved in priority order. First match wins.
 3. **GitHub CLI (`gh`)**
    ```bash
    gh auth login
-   copilot-review
+   llm-review
    ```
 
 The tool automatically exchanges your OAuth token for a session token and caches it for subsequent requests.
@@ -342,8 +342,8 @@ Sign in to GitHub Copilot in VS Code, Neovim, or JetBrains. The tool will use th
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/copilot-reviewer.git
-cd copilot-reviewer
+git clone https://github.com/yourusername/llm-reviewer.git
+cd llm-reviewer
 
 # Install dependencies
 npm install
@@ -359,13 +359,13 @@ node dist/cli.js --help
 
 # Or link globally for testing
 npm link
-copilot-review --help
+llm-review --help
 ```
 
 ### Project Structure
 
 ```
-copilot-reviewer/
+llm-reviewer/
 ├── src/
 │   ├── lib/              # Core library (authentication, API client, etc.)
 │   ├── cli.ts            # CLI entry point
@@ -383,4 +383,4 @@ MIT License. See [LICENSE](./LICENSE) for details.
 
 ---
 
-**Questions or issues?** Open an issue on [GitHub](https://github.com/yourusername/copilot-reviewer).
+**Questions or issues?** Open an issue on [GitHub](https://github.com/yourusername/llm-reviewer).

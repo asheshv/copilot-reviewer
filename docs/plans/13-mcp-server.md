@@ -18,12 +18,12 @@ Use MCP SDK test client for testing.
 ```typescript
 describe("MCP Server", () => {
   describe("tool registration", () => {
-    it("registers copilot_review tool");
-    it("registers copilot_chat tool");
-    it("registers copilot_models tool");
+    it("registers llm_review tool");
+    it("registers llm_chat tool");
+    it("registers llm_models tool");
   });
 
-  describe("copilot_review", () => {
+  describe("llm_review", () => {
     describe("parameter validation", () => {
       it("rejects invalid mode with invalid_parameter error");
       it("rejects pr mode without pr param with missing_parameter error");
@@ -37,13 +37,13 @@ describe("MCP Server", () => {
     it("maps tool parameters to ReviewOptions correctly");
   });
 
-  describe("copilot_chat", () => {
+  describe("llm_chat", () => {
     it("calls client.chat with empty systemPrompt when no context");
     it("uses context as systemPrompt when provided");
     it("returns content, model, usage");
   });
 
-  describe("copilot_models", () => {
+  describe("llm_models", () => {
     it("returns model list with id, name, endpoints, capabilities");
   });
 
@@ -68,7 +68,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 export async function startServer() {
-  const server = new Server({ name: "copilot-reviewer", version: "0.1.0" }, {
+  const server = new Server({ name: "llm-reviewer", version: "1.0.0" }, {
     capabilities: { tools: {} },
   });
 
@@ -76,17 +76,17 @@ export async function startServer() {
   server.setRequestHandler(ListToolsRequestSchema, () => ({
     tools: [
       {
-        name: "copilot_review",
+        name: "llm_review",
         description: "Review code changes using GitHub Copilot",
         inputSchema: { /* JSON Schema for mode, base, pr, range, count, model, prompt */ },
       },
       {
-        name: "copilot_chat",
+        name: "llm_chat",
         description: "Chat with GitHub Copilot about code",
         inputSchema: { /* JSON Schema for message, context, model */ },
       },
       {
-        name: "copilot_models",
+        name: "llm_models",
         description: "List available GitHub Copilot models",
         inputSchema: { type: "object", properties: {} },
       },
@@ -97,9 +97,9 @@ export async function startServer() {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       switch (request.params.name) {
-        case "copilot_review": return await handleReview(request.params.arguments);
-        case "copilot_chat": return await handleChat(request.params.arguments);
-        case "copilot_models": return await handleModels();
+        case "llm_review": return await handleReview(request.params.arguments);
+        case "llm_chat": return await handleChat(request.params.arguments);
+        case "llm_models": return await handleModels();
         default: return { isError: true, content: [{ type: "text", text: "Unknown tool" }] };
       }
     } catch (err) {
@@ -116,7 +116,7 @@ Key implementation details:
 - `handleReview(params)`: validate parameters → `loadConfig({ prompt, model })` → build `ReviewOptions` (per spec mapping) → call `review(options)` → return structured result
 - `handleChat(params)`: resolve model → `client.chat({ systemPrompt: context || "", messages: [{ role: "user", content: message }], ... })` → return result
 - `handleModels()`: `models.listModels()` → return structured list
-- `mapErrorToToolResult(err)`: catch `CopilotReviewError` → `{ isError: true, content: [{ type: "text", text: JSON.stringify({ error, message, recoverable, raw }) }] }`
+- `mapErrorToToolResult(err)`: catch `LlmReviewError` → `{ isError: true, content: [{ type: "text", text: JSON.stringify({ error, message, recoverable, raw }) }] }`
 - Parameter validation before calling lib (invalid mode, missing required params for mode-specific params)
 
 Never throw — all errors caught and returned as structured tool results.

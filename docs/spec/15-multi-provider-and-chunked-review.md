@@ -22,7 +22,7 @@ This spec introduces two related capabilities:
 
 - Runtime plugin loading (file-based or npm-based) — built-in providers only for now.
 - Independently configurable model for the reduce (aggregation) pass — deferred to a future enhancement.
-- Renaming the project from `copilot-review` — cosmetic, deferred.
+- Renaming the project from `llm-review` — cosmetic, deferred.
 
 ---
 
@@ -431,18 +431,18 @@ interface ResolvedConfig {
 
 New paths:
 
-- **Global**: `~/.code-reviewer/config.json`
-- **Project**: `<git-root>/.code-reviewer/config.json`
+- **Global**: `~/.llm-reviewer/config.json`
+- **Project**: `<git-root>/.llm-reviewer/config.json`
 
-Backward compatibility: if the new path does not exist, fall back to the old path (`~/.copilot-review/`). New path takes precedence if both exist. Fallback is **file-level** — the entire config file is loaded from one path or the other, never merged field-by-field across both paths.
+Backward compatibility: if the new path does not exist, fall back to the old path (`~/.llm-review/`). New path takes precedence if both exist. Fallback is **file-level** — the entire config file is loaded from one path or the other, never merged field-by-field across both paths.
 
-**Migration risk assessment:** We considered the risk of silent config loss when both `~/.code-reviewer/` and `~/.copilot-review/` exist. The precedence rule (new path wins) is deterministic, but a user who manually edits the old path after the new one was auto-created would see their changes ignored without any feedback.
+**Migration risk assessment:** We considered the risk of silent config loss when both `~/.llm-reviewer/` and `~/.llm-review/` exist. The precedence rule (new path wins) is deterministic, but a user who manually edits the old path after the new one was auto-created would see their changes ignored without any feedback.
 
 Mitigations:
 - The `status` command shows exactly which config file is loaded and whether the fallback path exists, making debugging straightforward.
 - The tool **never auto-creates** config directories — users create them explicitly. This eliminates the "auto-created new path shadows old path" scenario.
-- If both paths exist, the `status` command shows: `Config (global): ~/.code-reviewer/config.json (found, note: ~/.copilot-review/config.json also exists — ignored)`.
-- Additionally, during normal `review` invocation, if both paths exist, emit a **one-time warning to stderr**: `"Warning: both ~/.code-reviewer/ and ~/.copilot-review/ exist. Using ~/.code-reviewer/. Run 'copilot-review status' for details."` This is NOT silent — it surfaces the shadowing during actual use, not just in the diagnostic command.
+- If both paths exist, the `status` command shows: `Config (global): ~/.llm-reviewer/config.json (found, note: ~/.llm-review/config.json also exists — ignored)`.
+- Additionally, during normal `review` invocation, if both paths exist, emit a **one-time warning to stderr**: `"Warning: both ~/.llm-reviewer/ and ~/.llm-review/ exist. Using ~/.llm-reviewer/. Run 'llm-review status' for details."` This is NOT silent — it surfaces the shadowing during actual use, not just in the diagnostic command.
 
 A future migration tool or deprecation warning is out of scope but documented in Section 9.
 
@@ -454,27 +454,27 @@ Layer  Source                         Fields affected
 1      Built-in defaults              all fields (provider: "copilot", model: "auto",
                                       format: "markdown", stream: true, chunking: "auto",
                                       prompt: built-in, defaultBase: "main", ignorePaths: [])
-2      CODEREVIEWER_PROVIDER env      provider only
-3      CODEREVIEWER_OLLAMA_URL env    providerOptions.ollama.baseUrl only
+2      LLM_REVIEWER_PROVIDER env      provider only
+3      LLM_REVIEWER_OLLAMA_URL env    providerOptions.ollama.baseUrl only
                                       (validated as parseable URL at config load time;
                                       throws ConfigError immediately if malformed — don't
                                       defer to provider construction)
-3b     CODEREVIEWER_CHUNKING env     chunking only (kill switch: "never" disables chunking)
+3b     LLM_REVIEWER_CHUNKING env     chunking only (kill switch: "never" disables chunking)
 4      Global config file             all ConfigFile fields (provider, model, format,
-       ~/.code-reviewer/config.json   stream, prompt, defaultBase, ignorePaths, chunking,
-       (fallback: ~/.copilot-review/) providerOptions, mode)
+       ~/.llm-reviewer/config.json   stream, prompt, defaultBase, ignorePaths, chunking,
+       (fallback: ~/.llm-review/) providerOptions, mode)
                                       URL fields (providerOptions.ollama.baseUrl) validated
                                       at config load time, same as env vars
 5      Project config file            same as layer 4
-       <git-root>/.code-reviewer/
-       (fallback: .copilot-review/)
+       <git-root>/.llm-reviewer/
+       (fallback: .llm-review/)
 6      CLI overrides                  --provider, --model, --format, --stream/--no-stream,
                                       --prompt, --chunking, --ollama-url, --config
 ```
 
 Environment variables slot between defaults and config files — config files can override them, CLI always wins. Each layer only overrides fields it explicitly sets; unset fields pass through from the previous layer.
 
-**Validation timing:** All env vars and config file values are validated eagerly during `loadConfig()`. Invalid values (malformed URLs, unknown chunking modes) throw `ConfigError` immediately — before provider construction or review pipeline starts. `CODEREVIEWER_PROVIDER` is **not** validated against `availableProviders()` at config time (it's just a string); validation happens in `createProvider()` where the registry is available.
+**Validation timing:** All env vars and config file values are validated eagerly during `loadConfig()`. Invalid values (malformed URLs, unknown chunking modes) throw `ConfigError` immediately — before provider construction or review pipeline starts. `LLM_REVIEWER_PROVIDER` is **not** validated against `availableProviders()` at config time (it's just a string); validation happens in `createProvider()` where the registry is available.
 
 **`providerOptions` merge semantics:** shallow merge per provider key. If project config sets `providerOptions.ollama`, it **replaces** the entire `ollama` object from the global config (not deep-merged). This is consistent with how the existing config merge works for simple fields and avoids surprising partial-override behavior. Example:
 
@@ -492,30 +492,30 @@ Result:  { providerOptions: { ollama: { baseUrl: "http://localhost:11434" } } }
 --ollama-url <url>      Ollama base URL (shorthand for providerOptions.ollama.baseUrl)
 ```
 
-The existing `copilot-review models` subcommand becomes provider-aware: `copilot-review models --provider ollama` lists Ollama models. Defaults to the configured provider.
+The existing `llm-review models` subcommand becomes provider-aware: `llm-review models --provider ollama` lists Ollama models. Defaults to the configured provider.
 
 ### Status Command
 
-New subcommand: `copilot-review status`
+New subcommand: `llm-review status`
 
 Displays resolved configuration and provider health in a single view. Useful for debugging setup issues and confirming what the tool will use before running a review.
 
 ```
-$ copilot-review status
+$ llm-review status
 
   Provider:       copilot
   Model:          auto → gpt-4.1 (auto-selected)
   Chunking:       auto
   Stream:         true
   Format:         markdown
-  Config (global): ~/.code-reviewer/config.json (found)
-  Config (project): /repo/.code-reviewer/config.json (not found, fallback: .copilot-review/ not found)
+  Config (global): ~/.llm-reviewer/config.json (found)
+  Config (project): /repo/.llm-reviewer/config.json (not found, fallback: .llm-review/ not found)
   Auth:           GitHub token (gh CLI) ✓
   API reachable:  ✓ (245ms)
 ```
 
 ```
-$ copilot-review status --provider ollama
+$ llm-review status --provider ollama
 
   Provider:       ollama
   Model:          (not set — required, use --model)
@@ -523,15 +523,15 @@ $ copilot-review status --provider ollama
   Chunking:       auto
   Stream:         true
   Format:         markdown
-  Config (global): ~/.code-reviewer/config.json (found)
-  Config (project): /repo/.code-reviewer/config.json (not found)
+  Config (global): ~/.llm-reviewer/config.json (found)
+  Config (project): /repo/.llm-reviewer/config.json (not found)
   Auth:           none (not required)
   API reachable:  ✓ (12ms)
   Models:         deepseek-coder-v2, codellama:13b, qwen2.5-coder:7b
 ```
 
 ```
-$ copilot-review status --provider ollama
+$ llm-review status --provider ollama
 
   Provider:       ollama
   ...
@@ -614,9 +614,9 @@ chunking = "never":   → current behavior, throw ReviewError if diff too large
                          rather than silent degradation via chunking
                          Also serves as the **kill switch** — if chunking causes issues in
                          production, set chunking: "never" globally or per-project to disable
-                         it entirely with zero code changes. The CODEREVIEWER_CHUNKING env var
+                         it entirely with zero code changes. The LLM_REVIEWER_CHUNKING env var
                          provides the same kill switch without config file changes:
-                           CODEREVIEWER_CHUNKING=never copilot-review local
+                           LLM_REVIEWER_CHUNKING=never llm-review local
 ```
 
 **Important:** The 80% threshold is always evaluated against the **resolved** model's `maxPromptTokens`, never against `model: "auto"`. Model resolution (auto-select or explicit validation) must complete before the chunking decision is made. This is the same ordering as the current pipeline — `resolveModel()` runs before `checkTokenBudget()`.
@@ -624,10 +624,10 @@ chunking = "never":   → current behavior, throw ReviewError if diff too large
 **Model resolution failure:** If model resolution fails (auto-select API error, model not found), the review fails immediately with `ModelError` — same as current behavior. Chunking is never attempted without a resolved model. There is no fallback to a default `maxPromptTokens`.
 
 **Model resolution with providers that lack auto-select (e.g., Ollama):**
-- `model: "auto"` + Ollama → `resolveModel()` checks `provider.autoSelect` → absent → throws `ConfigError("model_required", "Provider 'ollama' requires an explicit model. Use --model or set model in config. Run 'copilot-review models --provider ollama' to see available models.")`
+- `model: "auto"` + Ollama → `resolveModel()` checks `provider.autoSelect` → absent → throws `ConfigError("model_required", "Provider 'ollama' requires an explicit model. Use --model or set model in config. Run 'llm-review models --provider ollama' to see available models.")`
 - This check happens early in the review pipeline, before diff collection or chunking.
 - The `status` command also surfaces this: `Model: (not set — required, use --model)`
-- CLI example: `copilot-review --provider ollama` without `--model` → same error, exit code 5 (CONFIG_ERROR).
+- CLI example: `llm-review --provider ollama` without `--model` → same error, exit code 5 (CONFIG_ERROR).
 
 **Expected behavior:** With modern models (128k+ context), the vast majority of reviews (~70-80% for typical PRs) will fit in a single pass. Chunking primarily benefits large refactors, dependency updates, or reviews against smaller-context local models (e.g., Ollama with 8k-32k models). The `chunking: "auto"` default ensures zero overhead for the common case.
 
@@ -954,7 +954,7 @@ All phases (map + reduce) use `provider.chat()` (buffered). Progress markers emi
 For a diff spanning 8 files split into 3 chunks (markdown format):
 
 ```markdown
-# Copilot Code Review
+# LLM Code Review
 
 **Model:** gpt-4.1 | **Files:** 8 | **+342 -89** | **Chunks:** 3
 
@@ -1056,7 +1056,7 @@ src/lib/
 |----------|-------------|------|---------|
 | Unknown provider name | `ConfigError` | `unknown_provider` | "Unknown provider '{name}'. Available: copilot, ollama" |
 | Ollama unreachable | `ClientError` | `provider_unavailable` | "Cannot reach Ollama at {url}. Is it running?" |
-| Ollama model not found | `ModelError` | `model_not_found` | "Model '{id}' not found on Ollama. Run `copilot-review models --provider ollama` to see available models." |
+| Ollama model not found | `ModelError` | `model_not_found` | "Model '{id}' not found on Ollama. Run `llm-review models --provider ollama` to see available models." |
 | No model specified, provider lacks auto-select | `ConfigError` | `model_required` | "Provider '{name}' requires an explicit model. Use --model or set in config." |
 | Chunk N fails | `ReviewError` | `chunk_failed` | "Review failed on chunk {n}/{total} (files: [...]): {cause}" |
 | Reduce pass fails | `ReviewError` | `reduce_failed` | "Aggregation pass failed: {cause}". Since map-phase findings were already collected, include them as a fallback: concatenate raw chunk findings with chunk headers, prepended with `"⚠ Aggregation failed — raw per-chunk findings below (may contain duplicates):\n\n"`. The formatter adds `(unaggregate)` to the output header. This is better than losing all work, and the explicit labeling prevents users from mistaking it for a clean review. |
@@ -1219,10 +1219,10 @@ For `OpenAIChatProvider` base class testing, use a concrete test subclass with `
 - **Independently configurable reduce model** — allow a different (smaller/cheaper) model for the aggregation pass.
 - **Runtime plugin loading** — file-based or npm-based provider plugins.
 - **Parallel chunk execution** — configurable concurrency for providers that support it.
-- **Project rename** — `copilot-review` → provider-neutral name.
+- **Project rename** — `llm-review` → provider-neutral name.
 - **Anthropic provider** — implement `ReviewProvider` directly (non-OpenAI protocol).
-- **Config migration tooling** — `copilot-review migrate-config` to move `~/.copilot-review/` → `~/.code-reviewer/` with deprecation warnings when old paths are detected.
-- **File/directory scoped review** — `copilot-review local --path src/lib/auth.ts` or `--path src/lib/` to review only specific files or directories, filtering the diff to matching paths before sending to the provider.
+- **Config migration tooling** — `llm-review migrate-config` to move `~/.llm-review/` → `~/.llm-reviewer/` with deprecation warnings when old paths are detected.
+- **File/directory scoped review** — `llm-review local --path src/lib/auth.ts` or `--path src/lib/` to review only specific files or directories, filtering the diff to matching paths before sending to the provider.
 
 ---
 

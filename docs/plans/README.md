@@ -1,8 +1,8 @@
-# GitHub Copilot Reviewer — Implementation Plan
+# LLM Reviewer — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a TypeScript CLI tool + MCP server that reviews code changes using GitHub Copilot's chat API.
+**Goal:** Build a TypeScript CLI tool + MCP server that reviews code changes using LLMs.
 
 **Architecture:** Hybrid — shared `lib/` with two thin entry points (`cli.ts`, `mcp-server.ts`). All core logic in `src/lib/`. Both entry points import the library directly; no process spawning.
 

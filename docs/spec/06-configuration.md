@@ -10,16 +10,16 @@
 
 ```mermaid
 graph LR
-    A["Layer 1<br/><b>Built-in default</b><br/>(lowest)"] --> B["Layer 2<br/><b>~/.copilot-review/</b><br/>Global config"]
-    B --> C["Layer 3<br/><b>&lt;project&gt;/.copilot-review/</b><br/>Project config"]
+    A["Layer 1<br/><b>Built-in default</b><br/>(lowest)"] --> B["Layer 2<br/><b>~/.llm-reviewer/</b><br/>Global config"]
+    B --> C["Layer 3<br/><b>&lt;project&gt;/.llm-reviewer/</b><br/>Project config"]
     C --> D["Layer 4<br/><b>CLI flags</b><br/>(highest)"]
 ```
 
 | Layer | Source | Scope |
 |-------|--------|-------|
 | 1 | `prompts/default-review.md` + hardcoded defaults | Ships with the tool |
-| 2 | `~/.copilot-review/config.json` + `config.md` | Personal defaults across all projects |
-| 3 | `<git-root>/.copilot-review/config.json` + `config.md` | Project team settings (committed to git) |
+| 2 | `~/.llm-reviewer/config.json` + `config.md` | Personal defaults across all projects |
+| 3 | `<git-root>/.llm-reviewer/config.json` + `config.md` | Project team settings (committed to git) |
 | 4 | `--model`, `--format`, `--prompt` flags | One-shot invocation override |
 
 ## Config JSON Schema
@@ -178,4 +178,4 @@ All file paths are normalized to forward slashes internally (even on Windows) fo
 
 ### Monorepo Projects
 
-Project config is loaded from `<git-root>/.copilot-review/`. In monorepos (git root above the project directory), all services share the same project config. For per-service config, use `--config` flag or rely on global config for per-developer overrides.
+Project config is loaded from `<git-root>/.llm-reviewer/`. In monorepos (git root above the project directory), all services share the same project config. For per-service config, use `--config` flag or rely on global config for per-developer overrides.

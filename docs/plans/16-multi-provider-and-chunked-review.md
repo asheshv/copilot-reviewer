@@ -278,11 +278,11 @@ git commit -m "feat: add provider factory with registry pattern"
 
 Add tests to `config.test.ts`:
 - Default config has `provider: "copilot"`, `chunking: "auto"`, `providerOptions: {}`
-- `CODEREVIEWER_PROVIDER=ollama` overrides provider
-- `CODEREVIEWER_OLLAMA_URL=http://remote:11434` overrides providerOptions.ollama.baseUrl
-- `CODEREVIEWER_CHUNKING=never` overrides chunking
-- Invalid `CODEREVIEWER_OLLAMA_URL` throws ConfigError at load time
-- New config path `~/.code-reviewer/` preferred over `~/.copilot-review/`
+- `LLM_REVIEWER_PROVIDER=ollama` overrides provider
+- `LLM_REVIEWER_OLLAMA_URL=http://remote:11434` overrides providerOptions.ollama.baseUrl
+- `LLM_REVIEWER_CHUNKING=never` overrides chunking
+- Invalid `LLM_REVIEWER_OLLAMA_URL` throws ConfigError at load time
+- New config path `~/.llm-reviewer/` preferred over `~/.llm-reviewer/`
 - Fallback: if new path missing, old path used silently
 - Both paths exist: warning emitted, new path wins
 - providerOptions: shallow merge per provider key
@@ -301,8 +301,8 @@ Update `src/lib/config.ts`:
 - Add env var reading layer between defaults and global config
 - Update `loadConfigLayer()` to handle new fields
 - Update `mergeConfig()` for providerOptions (shallow merge per key)
-- Update path detection: try `~/.code-reviewer/` first, fallback to `~/.copilot-review/`
-- Same for project path: `<git-root>/.code-reviewer/` then `.copilot-review/`
+- Update path detection: try `~/.llm-reviewer/` first, fallback to `~/.llm-reviewer/`
+- Same for project path: `<git-root>/.llm-reviewer/` then `.llm-reviewer/`
 - URL validation for providerOptions.ollama.baseUrl
 - Unknown providerOptions key warning (Levenshtein)
 - Both-paths-exist warning
@@ -497,7 +497,7 @@ Add `status` subcommand to `buildProgram()`.
 
 ```bash
 git add src/cli.ts test/
-git commit -m "feat: add 'copilot-review status' command"
+git commit -m "feat: add 'llm-review status' command"
 ```
 
 ---

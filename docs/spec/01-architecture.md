@@ -7,7 +7,7 @@
 ## Project Structure
 
 ```
-github-copilot-reviewer/
+llm-reviewer/
 ├── package.json
 ├── tsconfig.json
 ├── LICENSE                        # MIT
@@ -40,7 +40,7 @@ github-copilot-reviewer/
 │   ├── spec/                      # this specification
 │   ├── adr/                       # architectural decision records
 │   └── reference/                 # reverse-engineered API docs
-└── .copilot-review/               # project-level config (dogfooding)
+└── .llm-reviewer/                 # project-level config (dogfooding)
     ├── config.json
     └── config.md
 ```
@@ -161,7 +161,7 @@ graph LR
 {
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
-  "bin": { "copilot-review": "dist/cli.js" },
+  "bin": { "llm-review": "dist/cli.js" },
   "files": ["dist/", "prompts/"]
 }
 ```

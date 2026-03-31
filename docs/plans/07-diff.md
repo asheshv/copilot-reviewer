@@ -62,7 +62,7 @@ describe("collectDiff", () => {
     it("throws insufficient_history for shallow clone with HEAD~N");
     it("throws no_commits when repo has no commits");
     it("throws diff_too_large when raw exceeds 10 MB");
-    it("respects COPILOT_REVIEW_MAX_DIFF_SIZE env var for size limit");
+    it("respects LLM_REVIEWER_MAX_DIFF_SIZE env var for size limit");
   });
 
   describe("merge conflicts", () => {
@@ -93,7 +93,7 @@ Expected: FAIL.
    - Count insertions/deletions per file
    - Detect binary files ("Binary files" line)
 5. Apply `ignorePaths` filter using `minimatch` (add `minimatch` to dependencies in package.json). Supports `**`, `*`, `?` patterns. Needed for patterns like `vendor/**` and `*.lock`.
-6. Check size limit (`COPILOT_REVIEW_MAX_DIFF_SIZE` env var, default 10 MB)
+6. Check size limit (`LLM_REVIEWER_MAX_DIFF_SIZE` env var, default 10 MB)
 7. Detect git error patterns in stderr:
    - "not a git repository" → `not_git_repo`
    - "unknown revision" with HEAD → `no_commits`

@@ -13,8 +13,8 @@ Four configuration layers with explicit merge control:
 
 ```
 Layer 1: Built-in default    (prompts/default-review.md + hardcoded settings)
-Layer 2: Global config       (~/.copilot-review/config.json + config.md)
-Layer 3: Project config      (<git-root>/.copilot-review/config.json + config.md)
+Layer 2: Global config       (~/.llm-reviewer/config.json + config.md)
+Layer 3: Project config      (<git-root>/.llm-reviewer/config.json + config.md)
 Layer 4: CLI flags            (--model, --format, --prompt)
 ```
 
@@ -47,7 +47,7 @@ Some projects need fundamentally different review criteria (e.g., a data pipelin
 
 - **Single config file (YAML/TOML)** — one file per layer with prompt inline. Rejected: prose in YAML is awkward, and it couples structured settings with free-form text.
 - **Only extend, never replace** — simpler but too rigid. Some projects genuinely need different prompts.
-- **Environment variable overrides** — considered for CI. Deferred: CLI flags cover CI use cases (`copilot-review --prompt "..."` in a pipeline).
+- **Environment variable overrides** — considered for CI. Deferred: CLI flags cover CI use cases (`llm-review --prompt "..."` in a pipeline).
 
 ## Consequences
 

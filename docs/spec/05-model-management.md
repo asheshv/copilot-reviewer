@@ -84,7 +84,7 @@ autoSelect(): Promise<string>           // returns model ID
 validateModel(id: string): Promise<ModelInfo>  // throws ModelError if not found
 ```
 
-## CLI: `copilot-review models`
+## CLI: `llm-review models`
 
 Lists available models in a human-readable table:
 
@@ -96,7 +96,7 @@ claude-sonnet   Claude Sonnet  200k      8k        yes        yes
 ...
 ```
 
-The [MCP server](./09-mcp-server.md) returns the same data as structured JSON via the `copilot_models` tool.
+The [MCP server](./09-mcp-server.md) returns the same data as structured JSON via the `llm_models` tool.
 
 ## Model Costs and Quotas
 
@@ -118,7 +118,7 @@ GET https://api.github.com/copilot_internal/user
 Authorization: Token <oauth_token>
 ```
 
-Returns `quota_snapshots.premium_interactions.remaining` and `quota_reset_date`. The CLI `copilot-review models` command should display cost multiplier (if available from API). A dedicated `copilot-review quota` subcommand is a [future enhancement](./14-future.md).
+Returns `quota_snapshots.premium_interactions.remaining` and `quota_reset_date`. The CLI `llm-review models` command should display cost multiplier (if available from API). A dedicated `llm-review quota` subcommand is a [future enhancement](./14-future.md).
 
 ## GitHub Models Provider (Alternative)
 

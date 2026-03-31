@@ -8,13 +8,13 @@
 
 | Mode | Git Command | CLI Usage | Notes |
 |------|------------|-----------|-------|
-| `unstaged` | `git diff` | `copilot-review unstaged` | Working tree vs index |
-| `staged` | `git diff --cached` | `copilot-review staged` | Index vs HEAD |
-| `local` | `git diff HEAD` | `copilot-review local` | **Default.** Staged + unstaged |
-| `branch` | `git diff <base>...HEAD` | `copilot-review branch [base]` | Uses `defaultBase` from [config](./06-configuration.md) if no base specified |
-| `pr` | `gh pr diff <number> --patch` | `copilot-review pr <number>` | Requires `gh` CLI |
-| `commits` | `git diff HEAD~<n>..HEAD` | `copilot-review commits <n>` | Last N commits |
-| `range` | `git diff <ref1>..<ref2>` | `copilot-review range <ref1>..<ref2>` | Arbitrary ref range |
+| `unstaged` | `git diff` | `llm-review unstaged` | Working tree vs index |
+| `staged` | `git diff --cached` | `llm-review staged` | Index vs HEAD |
+| `local` | `git diff HEAD` | `llm-review local` | **Default.** Staged + unstaged |
+| `branch` | `git diff <base>...HEAD` | `llm-review branch [base]` | Uses `defaultBase` from [config](./06-configuration.md) if no base specified |
+| `pr` | `gh pr diff <number> --patch` | `llm-review pr <number>` | Requires `gh` CLI |
+| `commits` | `git diff HEAD~<n>..HEAD` | `llm-review commits <n>` | Last N commits |
+| `range` | `git diff <ref1>..<ref2>` | `llm-review range <ref1>..<ref2>` | Arbitrary ref range |
 
 ## Interface
 
@@ -53,7 +53,7 @@ interface FileChange {
 collectDiff(options: DiffOptions): Promise<DiffResult>
 ```
 
-Returns both raw diff text (sent to Copilot) and parsed metadata (used by [formatter](./11-formatter.md) and [MCP server](./09-mcp-server.md)).
+Returns both raw diff text (sent to the provider) and parsed metadata (used by [formatter](./11-formatter.md) and [MCP server](./09-mcp-server.md)).
 
 ## Validations
 
@@ -98,7 +98,7 @@ In a brand new repo with no commits, `git diff HEAD` fails. Detect "unknown revi
 During active merge conflicts, `git diff` output includes conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`). These are preserved in `raw` diff and sent to Copilot as-is. Review results may be misleading — resolve conflicts before reviewing for best results.
 
 ### Diff Size Limit
-If `raw` diff exceeds **10 MB** (configurable via `COPILOT_REVIEW_MAX_DIFF_SIZE` env var), fail immediately with `DiffError { code: "diff_too_large" }` before any further processing. Prevents OOM on accidentally committed binaries.
+If `raw` diff exceeds **10 MB** (configurable via `LLM_REVIEWER_MAX_DIFF_SIZE` env var), fail immediately with `DiffError { code: "diff_too_large" }` before any further processing. Prevents OOM on accidentally committed binaries.
 
 ## Security
 

@@ -1,4 +1,4 @@
-# GitHub Copilot Reviewer — Design Specification
+# LLM Reviewer — Design Specification
 
 **Date:** 2026-03-27
 **Status:** Draft
@@ -10,7 +10,7 @@
 
 A TypeScript/Node.js tool that reviews code changes using GitHub Copilot's chat API. Two entry points share a common library:
 
-- **CLI** (`copilot-review`) — standalone command-line tool for reviewing diffs
+- **CLI** (`llm-review`) — standalone command-line tool for reviewing diffs
 - **MCP Server** — exposes review, chat, and model listing as tools for any MCP-compatible AI agent
 
 The CLI is the engine; the MCP server is the interface layer. Both import a shared `lib/` — no process spawning between them.
@@ -56,6 +56,6 @@ The CLI is the engine; the MCP server is the interface layer. Both import a shar
 | Diff modes | 7 modes (unstaged, staged, local, branch, PR, commits, range) | [03](./03-diff-collection.md) |
 | Model selection | Auto by default, `--model` override | [05](./05-model-management.md) |
 | Output formats | text, markdown (default), json | [11](./11-formatter.md) |
-| MCP tools | `copilot_review`, `copilot_chat`, `copilot_models` | [09](./09-mcp-server.md) |
+| MCP tools | `llm_review`, `llm_chat`, `llm_models` | [09](./09-mcp-server.md) |
 | Testing | vitest + msw + recorded fixtures | [13](./13-testing.md) |
 | License | MIT | Project root |

@@ -16,14 +16,14 @@
 
 ```json
 {
-  "name": "copilot-reviewer",
-  "version": "0.1.0",
-  "description": "Review code changes using GitHub Copilot",
+  "name": "llm-reviewer",
+  "version": "1.0.0",
+  "description": "Review code changes using LLMs",
   "type": "module",
   "main": "dist/lib/index.js",
   "types": "dist/lib/index.d.ts",
   "bin": {
-    "copilot-review": "dist/cli.js"
+    "llm-review": "dist/cli.js"
   },
   "files": [
     "dist/",

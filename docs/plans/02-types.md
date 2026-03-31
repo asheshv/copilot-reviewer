@@ -17,16 +17,16 @@
 // test/lib/types.test.ts
 import { describe, it, expect } from "vitest";
 import {
-  CopilotReviewError, AuthError, DiffError, ClientError,
+  LlmReviewError, AuthError, DiffError, ClientError,
   ConfigError, ModelError, ReviewError, ParameterError,
 } from "../../src/lib/types.js";
 
-describe("CopilotReviewError", () => {
+describe("LlmReviewError", () => {
   it("extends Error with code, recoverable, and cause", () => {
     const cause = new Error("original");
     const err = new AuthError("no_token", "No token found", false, cause);
     expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(CopilotReviewError);
+    expect(err).toBeInstanceOf(LlmReviewError);
     expect(err).toBeInstanceOf(AuthError);
     expect(err.code).toBe("no_token");
     expect(err.message).toBe("No token found");
@@ -66,8 +66,8 @@ describe("ClientError", () => {
 describe("ConfigError", () => {
   it("supports filePath field", () => {
     const err = new ConfigError("malformed_json", "Bad JSON");
-    err.filePath = "~/.copilot-review/config.json";
-    expect(err.filePath).toBe("~/.copilot-review/config.json");
+    err.filePath = "~/.llm-reviewer/config.json";
+    expect(err.filePath).toBe("~/.llm-reviewer/config.json");
   });
 });
 
@@ -105,7 +105,7 @@ Expected: FAIL — `types.ts` module not found.
 
 This is the largest single file. It contains ALL shared interfaces and error classes used across the project. Read the following spec files for exact definitions:
 
-- **Error classes** (spec 10): `CopilotReviewError` base → `AuthError`, `DiffError`, `ClientError`, `ConfigError`, `ModelError`, `ReviewError`, `ParameterError`
+- **Error classes** (spec 10): `LlmReviewError` base → `AuthError`, `DiffError`, `ClientError`, `ConfigError`, `ModelError`, `ReviewError`, `ParameterError`
 - **Auth types** (spec 02/04): `AuthProvider` interface
 - **Message types** (spec 04): `Message`, `ToolCall`
 - **Client types** (spec 04): `ChatRequest`, `ChatResponse`, `StreamChunk`
@@ -116,7 +116,7 @@ This is the largest single file. It contains ALL shared interfaces and error cla
 - **Output types** (spec 11): `OutputFormat`
 - **Constants**: `EXIT_CODES`
 
-Each error class extends `CopilotReviewError` and adds type-specific optional fields (e.g., `AuthError.authorizeUrl`, `ClientError.status`, `ClientError.retryAfter`, `ModelError.available`).
+Each error class extends `LlmReviewError` and adds type-specific optional fields (e.g., `AuthError.authorizeUrl`, `ClientError.status`, `ClientError.retryAfter`, `ModelError.available`).
 
 `StreamChunk.type` must include `"warning"` in addition to the types in spec 04 (needed for NDJSON streaming format per spec 11). This is a plan-level extension — spec 04 only defines `content | reasoning | error | done`, but the formatter needs `warning` for NDJSON warning chunks.
 

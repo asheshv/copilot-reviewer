@@ -34,12 +34,12 @@ ReviewProvider (interface)
 
 ### 2. Status Command (Phase 2)
 
-New subcommand: `copilot-review status`
+New subcommand: `llm-review status`
 
 Shows resolved configuration, provider health, auth state, and available models in one view. Supports `--json` for machine-readable output with full `StatusOutput` schema.
 
 ```
-$ copilot-review status --provider ollama
+$ llm-review status --provider ollama
   Provider:         ollama
   Model:            auto
   API reachable:    ✓ (4ms)
@@ -65,7 +65,7 @@ Diff → splitDiffByFile() → binPackFiles(FFD) → MAP (sequential provider.ch
 - **Streaming support:** map phase buffered, reduce phase streamed; progress markers on stderr
 - **Budget retry:** on context-length API error, retries the chunk with 0.8x budget
 - **Reduce failure fallback:** if aggregation fails, returns raw per-chunk findings labeled "(unaggregated)"
-- **Kill switch:** `chunking: "never"` or `CODEREVIEWER_CHUNKING=never` disables entirely
+- **Kill switch:** `chunking: "never"` or `LLM_REVIEWER_CHUNKING=never` disables entirely
 
 **Key files:**
 - `src/lib/chunking.ts` — `splitDiffByFile()`, `binPackFiles()`, `splitFileByHunks()`
@@ -80,13 +80,13 @@ Enables fully local code review using any Ollama model.
 
 ```bash
 # List available Ollama models
-copilot-review models --provider ollama
+llm-review models --provider ollama
 
 # Review with a specific model
-copilot-review local --provider ollama --model qwen2.5-coder:14b
+llm-review local --provider ollama --model qwen2.5-coder:14b
 
 # With custom Ollama URL
-copilot-review local --provider ollama --ollama-url http://remote:11434 --model codellama
+llm-review local --provider ollama --ollama-url http://remote:11434 --model codellama
 ```
 
 **Model discovery:** Two-step — `GET /api/tags` for model names, `POST /api/show` per model for context length (falls back to 4096 if unavailable).
@@ -100,11 +100,11 @@ copilot-review local --provider ollama --ollama-url http://remote:11434 --model 
 - `--timeout <seconds>` — request timeout (default: 30s copilot, 120s ollama)
 
 **Environment variables:**
-- `CODEREVIEWER_PROVIDER` — provider override
-- `CODEREVIEWER_OLLAMA_URL` — Ollama URL override
-- `CODEREVIEWER_CHUNKING` — chunking kill switch
+- `LLM_REVIEWER_PROVIDER` — provider override
+- `LLM_REVIEWER_OLLAMA_URL` — Ollama URL override
+- `LLM_REVIEWER_CHUNKING` — chunking kill switch
 
-**Config paths:** `~/.code-reviewer/config.json` (new) with silent fallback to `~/.copilot-review/` (old). Warning emitted if both exist.
+**Config paths:** `~/.llm-reviewer/config.json` (new) with silent fallback to `~/.llm-review/` (old). Warning emitted if both exist.
 
 **Config merge order:** Defaults → env vars → global config → project config → CLI (env vars lose to config files — intentional design).
 
@@ -160,15 +160,15 @@ Key coverage areas:
 ### End-to-End Verification
 
 Tested against real Ollama instance with `qwen2.5-coder:14b` and `qwen2.5-coder:32b`:
-- `copilot-review models --provider ollama` — lists models with context lengths
-- `copilot-review status --provider ollama` — shows health, latency, model list
-- `copilot-review commits 1 --provider ollama --model qwen2.5-coder:14b` — full review with chunking (model has 4096 context → auto-chunks)
+- `llm-review models --provider ollama` — lists models with context lengths
+- `llm-review status --provider ollama` — shows health, latency, model list
+- `llm-review commits 1 --provider ollama --model qwen2.5-coder:14b` — full review with chunking (model has 4096 context → auto-chunks)
 
 ---
 
 ## Future Considerations
 
-### Rename: `copilot-reviewer` → `llm-reviewer`
+### Rename: `llm-reviewer` → `llm-reviewer`
 
 With multi-provider support, the "copilot" name no longer reflects the tool's scope. `llm-reviewer` maintains the `-reviewer` suffix pattern while accurately describing what the tool does. This is a cosmetic change that can be done separately — involves updating:
 - `package.json` name and bin

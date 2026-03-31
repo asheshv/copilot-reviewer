@@ -80,8 +80,8 @@ Every request to `api.githubcopilot.com`:
 
 ```
 Authorization: Bearer <session_token>
-Editor-Version: copilot-reviewer/1.0.0
-Editor-Plugin-Version: copilot-reviewer/1.0.0
+Editor-Version: llm-reviewer/1.0.0
+Editor-Plugin-Version: llm-reviewer/1.0.0
 Copilot-Integration-Id: vscode-chat
 x-github-api-version: 2025-10-01
 Content-Type: application/json
