@@ -1,21 +1,21 @@
 # llm-reviewer
 
-Review code changes using LLMs — CLI + MCP server for any AI agent.
+Review code changes using LLMs — CLI + MCP server for any AI agent. Supports GitHub Copilot and local Ollama models.
 
 ## Installation
 
 ```bash
-# Install globally from GitHub (pinned to latest release)
-npm install -g github:asheshv/llm-reviewer#v1.0.0
+# Install globally from GitHub
+npm install -g github:asheshv/llm-reviewer
 
 # Or use without installing:
-npx github:asheshv/llm-reviewer#v1.0.0 --help
+npx --yes github:asheshv/llm-reviewer --help
 ```
 
 ## Quick Start
 
 ```bash
-# Review uncommitted local changes
+# Review uncommitted local changes (uses Copilot by default)
 llm-reviewer
 
 # Review changes in a feature branch vs main
@@ -23,6 +23,9 @@ llm-reviewer branch main
 
 # Review a pull request
 llm-reviewer pr 123
+
+# Review with a local Ollama model
+llm-reviewer local --provider ollama --model qwen2.5-coder:14b
 ```
 
 ## CLI Usage
@@ -40,19 +43,24 @@ Modes (default: local):
   range <ref1>..<ref2>  Arbitrary ref range
 
 Options:
-  --model <id>       Model to use (default: auto)
-  --format <fmt>     text | markdown | json (default: markdown)
-  --stream           Force streaming output
-  --no-stream        Force buffered output
-  --prompt <text>    Override review prompt
-  --config <path>    Override config file path
-  --verbose          Enable debug logging to stderr
-  --help             Show help
-  --version          Show version
+  --model <id>          Model to use (default: auto)
+  --format <fmt>        text | markdown | json (default: markdown)
+  --stream              Force streaming output
+  --no-stream           Force buffered output
+  --prompt <text>       Override review prompt
+  --config <path>       Override config file path
+  --provider <name>     Review provider: copilot, ollama (default: copilot)
+  --chunking <mode>     auto | always | never (default: auto)
+  --timeout <seconds>   Request timeout (default: 30 for copilot, 120 for ollama)
+  --ollama-url <url>    Ollama base URL (default: http://localhost:11434)
+  --verbose             Enable debug logging to stderr
+  --help                Show help
+  --version             Show version
 
 Subcommands:
   llm-reviewer models          List available models
   llm-reviewer chat "<msg>"    Free-form LLM chat
+  llm-reviewer status          Show provider connectivity and configuration
 ```
 
 ### Examples
@@ -72,6 +80,88 @@ llm-reviewer branch main --model gpt-4.1 --format json
 
 # Custom review instructions
 llm-reviewer --prompt "Focus on security and error handling"
+
+# Review with Ollama (local LLM)
+llm-reviewer local --provider ollama --model qwen2.5-coder:14b
+
+# List Ollama models
+llm-reviewer models --provider ollama
+
+# Check provider status
+llm-reviewer status --provider ollama
+
+# Force chunking for large diffs
+llm-reviewer branch main --chunking always
+
+# Longer timeout for large models
+llm-reviewer commits 1 --provider ollama --model qwen2.5-coder:32b --timeout 300
+```
+
+## Providers
+
+### Copilot (default)
+
+Uses GitHub Copilot's chat API. Requires a GitHub token (see [Authentication](#authentication)).
+
+```bash
+llm-reviewer local                          # auto-selects model
+llm-reviewer local --model gpt-4.1          # specific model
+llm-reviewer models                         # list available models
+```
+
+### Ollama (local)
+
+Uses a locally running [Ollama](https://ollama.com) instance. No auth required.
+
+```bash
+# Start Ollama (if not running)
+ollama serve
+
+# List available models
+llm-reviewer models --provider ollama
+
+# Review with a specific model (model is required for Ollama)
+llm-reviewer local --provider ollama --model qwen2.5-coder:14b
+
+# Custom Ollama URL
+llm-reviewer local --provider ollama --ollama-url http://remote:11434 --model codellama
+
+# Non-streaming for cleaner output
+llm-reviewer commits 1 --provider ollama --model qwen2.5-coder:14b --no-stream
+```
+
+### Status Command
+
+Check provider connectivity, resolved configuration, and available models:
+
+```bash
+llm-reviewer status                         # default provider (copilot)
+llm-reviewer status --provider ollama       # check Ollama
+llm-reviewer status --json                  # machine-readable output
+```
+
+## Chunked Review
+
+For large diffs that exceed the model's context window, `llm-reviewer` automatically splits the diff into chunks, reviews each independently, then aggregates findings via a reduce pass.
+
+- **`auto`** (default) — chunks when diff exceeds 80% of model context
+- **`always`** — always chunk, even small diffs
+- **`never`** — fail if diff too large (useful for CI hard limits)
+
+```bash
+llm-reviewer branch main --chunking always   # force chunking
+llm-reviewer branch main --chunking never    # disable chunking
+
+# Kill switch via environment variable
+LLM_REVIEWER_CHUNKING=never llm-reviewer local
+```
+
+Chunked reviews show progress on stderr:
+```
+Reviewing chunk 1/3 (src/auth.ts, src/config.ts)... done (3,200 tokens)
+Reviewing chunk 2/3 (src/review.ts, src/prompt.ts)... done (2,800 tokens)
+Reviewing chunk 3/3 (src/cli.ts)... done (1,950 tokens)
+Aggregating findings... done (4,500 tokens)
 ```
 
 ## MCP Server Setup
@@ -151,12 +241,21 @@ The skill supports all providers (Copilot, Ollama), chunking, cross-model review
 
 ## Configuration
 
-Configuration is loaded from four layers (lowest to highest precedence):
+Configuration is loaded from multiple layers (lowest to highest precedence):
 
 1. **Built-in defaults** — Ships with the tool
-2. **Global config** — `~/.llm-reviewer/config.json` or `config.md`
-3. **Project config** — `<git-root>/.llm-reviewer/config.json` or `config.md`
-4. **CLI flags** — `--model`, `--format`, `--prompt` (highest precedence)
+2. **Environment variables** — `LLM_REVIEWER_*` (see below)
+3. **Global config** — `~/.llm-reviewer/config.json` or `config.md`
+4. **Project config** — `<git-root>/.llm-reviewer/config.json` or `config.md`
+5. **CLI flags** — `--model`, `--format`, `--provider`, etc. (highest precedence)
+
+### Environment Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `LLM_REVIEWER_PROVIDER` | Override provider | `ollama` |
+| `LLM_REVIEWER_OLLAMA_URL` | Ollama base URL | `http://remote:11434` |
+| `LLM_REVIEWER_CHUNKING` | Chunking mode (kill switch) | `never` |
 
 ### config.json Schema
 
@@ -168,7 +267,15 @@ Configuration is loaded from four layers (lowest to highest precedence):
   "mode": "extend",
   "prompt": "path/to/custom-prompt.md",
   "defaultBase": "main",
-  "ignorePaths": ["*.lock", "dist/**"]
+  "ignorePaths": ["*.lock", "dist/**"],
+  "provider": "copilot",
+  "providerOptions": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434"
+    }
+  },
+  "chunking": "auto",
+  "timeout": 30
 }
 ```
 
@@ -176,11 +283,15 @@ Configuration is loaded from four layers (lowest to highest precedence):
 |-------|------|---------|-------------|
 | `model` | string | `"auto"` | Model ID or `"auto"` for automatic selection |
 | `format` | string | `"markdown"` | Output format: `text`, `markdown`, or `json` |
-| `stream` | boolean | `true` | Enable streaming output (text/markdown only) |
+| `stream` | boolean | `true` | Enable streaming output |
 | `mode` | string | `"extend"` | Prompt merge strategy: `extend` or `replace` |
 | `prompt` | string | — | Inline text or path to `.md` file (relative to config dir) |
 | `defaultBase` | string | `"main"` | Default base branch for `branch` mode |
 | `ignorePaths` | string[] | `[]` | Glob patterns to exclude from diffs (merged across layers) |
+| `provider` | string | `"copilot"` | Review provider: `copilot` or `ollama` |
+| `providerOptions` | object | `{}` | Provider-specific config (e.g., Ollama base URL) |
+| `chunking` | string | `"auto"` | Chunking mode: `auto`, `always`, or `never` |
+| `timeout` | number | `30` | Request timeout in seconds (auto: 120 for Ollama) |
 
 ### Prompt Customization
 
@@ -285,6 +396,14 @@ Complete structured output in a single JSON object:
 }
 ```
 
+For chunked reviews, usage includes a breakdown:
+```json
+"usage": {
+  "totalTokens": 12450,
+  "chunkedBreakdown": { "mapTokens": 7950, "reduceTokens": 4500, "chunks": 3 }
+}
+```
+
 ### NDJSON (Streaming JSON)
 
 Use `--stream --format json` for newline-delimited JSON stream:
@@ -344,6 +463,8 @@ GitHub token is resolved in priority order. First match wins.
 
 The tool automatically exchanges your OAuth token for a session token and caches it for subsequent requests.
 
+**Note:** Authentication is only required for the Copilot provider. Ollama requires no auth.
+
 ### Setting Up Authentication
 
 **Option 1: GitHub CLI (recommended)**
@@ -368,7 +489,7 @@ Sign in to GitHub Copilot in VS Code, Neovim, or JetBrains. The tool will use th
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/llm-reviewer.git
+git clone https://github.com/asheshv/llm-reviewer.git
 cd llm-reviewer
 
 # Install dependencies
@@ -393,14 +514,39 @@ llm-reviewer --help
 ```
 llm-reviewer/
 ├── src/
-│   ├── lib/              # Core library (authentication, API client, etc.)
-│   ├── cli.ts            # CLI entry point
-│   └── mcp-server.ts     # MCP server entry point
-├── test/                 # Test files
-├── prompts/              # Default review prompt
-│   └── default-review.md
-├── docs/                 # Specifications and ADRs
-└── dist/                 # Built output (generated)
+│   ├── cli.ts                     # CLI entry point
+│   ├── mcp-server.ts              # MCP server entry point
+│   └── lib/
+│       ├── providers/             # Provider abstraction layer
+│       │   ├── types.ts           # ReviewProvider interface
+│       │   ├── openai-chat-provider.ts  # Shared OpenAI-compatible base
+│       │   ├── copilot-provider.ts      # GitHub Copilot provider
+│       │   ├── ollama-provider.ts       # Ollama local provider
+│       │   └── index.ts           # Provider factory
+│       ├── auth.ts                # Token resolution + session exchange
+│       ├── chunking.ts            # Diff splitting + bin-packing
+│       ├── config.ts              # Multi-layer config loading
+│       ├── diff.ts                # Git diff collection (7 modes)
+│       ├── formatter.ts           # Output formatting (text/markdown/json)
+│       ├── prompt.ts              # Prompt assembly + file manifests
+│       ├── review.ts              # Review orchestration + map-reduce chunking
+│       ├── streaming.ts           # SSE parser
+│       ├── truncation.ts          # Severity-aware truncation for reduce pass
+│       ├── types.ts               # Shared type definitions
+│       └── index.ts               # Public API exports
+├── test/                          # Tests (vitest + msw)
+├── prompts/
+│   └── default-review.md          # Built-in review prompt
+├── skills/
+│   └── SKILL.md                   # Claude Code skill definition
+├── docs/
+│   ├── spec/                      # Design specifications
+│   ├── adr/                       # Architecture decision records
+│   ├── plans/                     # Implementation plans
+│   └── reference/                 # API documentation
+└── .llm-reviewer/                 # Project-level config (dogfooding)
+    ├── config.json
+    └── config.md
 ```
 
 ## License
@@ -409,4 +555,4 @@ MIT License. See [LICENSE](./LICENSE) for details.
 
 ---
 
-**Questions or issues?** Open an issue on [GitHub](https://github.com/yourusername/llm-reviewer).
+**Questions or issues?** Open an issue on [GitHub](https://github.com/asheshv/llm-reviewer).
