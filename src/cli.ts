@@ -353,7 +353,7 @@ async function resolveAuthStatus(): Promise<StatusOutput["auth"]> {
     if (process.env.GITHUB_TOKEN?.trim()) {
       method = "env_token";
     } else {
-      // Check copilot config files existence
+      // Check GitHub Copilot OAuth config files
       const os = await import("os");
       const fs = await import("fs/promises");
       const home = os.homedir();

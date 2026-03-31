@@ -173,7 +173,7 @@ export interface StreamChunk {
 // ============================================================================
 
 /**
- * Metadata about a Copilot model.
+ * Metadata about a model from any provider.
  */
 export interface ModelInfo {
   id: string;
