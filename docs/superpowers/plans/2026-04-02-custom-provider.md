@@ -118,6 +118,59 @@ describe("CustomProvider", () => {
     });
   });
 
+  describe("chatStream()", () => {
+    it("streams response from baseUrl/chat/completions with auth header", async () => {
+      let capturedAuth = "";
+      server.use(
+        http.post(`${BASE_URL}/chat/completions`, async ({ request }) => {
+          capturedAuth = request.headers.get("authorization") ?? "";
+          const encoder = new TextEncoder();
+          const body = new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" }, finish_reason: null }] })}\n\n`
+                )
+              );
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          });
+          return new HttpResponse(body, {
+            headers: { "Content-Type": "text/event-stream" },
+          });
+        })
+      );
+
+      const provider = new CustomProvider("custom", BASE_URL, { apiKey: "sk-test" });
+      const chunks: string[] = [];
+      for await (const chunk of provider.chatStream({
+        model: "test-model",
+        systemPrompt: "You are helpful",
+        messages: [{ role: "user", content: "Hi" }],
+        stream: true,
+      })) {
+        if (chunk.type === "content" && chunk.text != null) {
+          chunks.push(chunk.text);
+        }
+      }
+
+      expect(capturedAuth).toBe("Bearer sk-test");
+      expect(chunks).toContain("Hello");
+    });
+  });
+
+  describe("apiKey vs apiKeyCommand precedence", () => {
+    it("apiKeyCommand wins when both apiKey and apiKeyCommand are provided", async () => {
+      const provider = new CustomProvider("custom", BASE_URL, {
+        apiKey: "sk-static",
+        apiKeyCommand: "echo sk-from-command",
+      });
+      const headers = await (provider as any).getHeaders();
+      expect(headers).toEqual({ Authorization: "Bearer sk-from-command" });
+    });
+  });
+
   describe("dispose()", () => {
     it("does not throw", () => {
       const provider = new CustomProvider("custom", BASE_URL, { apiKey: "secret" });
@@ -166,6 +219,7 @@ export class CustomProvider extends OpenAIChatProvider {
 
   private _auth: CustomProviderAuth;
   private _cachedKey: string | null = null;
+  private _keyFetchPromise: Promise<string> | null = null;
   private _disposed = false;
 
   constructor(
@@ -202,6 +256,11 @@ export class CustomProvider extends OpenAIChatProvider {
     }
     return {};
   }
+
+  /**
+   * Coalesce concurrent key resolution. If a command is already running,
+   * await its result instead of spawning a second execution.
+   */
 
   async listModels(): Promise<ModelInfo[]> {
     try {
@@ -243,10 +302,26 @@ export class CustomProvider extends OpenAIChatProvider {
       return this._cachedKey;
     }
 
+    // Re-cache static key if it was cleared by dispose() or key refresh
+    if (this._auth.apiKey && !this._auth.apiKeyCommand) {
+      this._cachedKey = this._auth.apiKey;
+      return this._cachedKey;
+    }
+
     if (this._auth.apiKeyCommand) {
-      const key = await this._execCommand(this._auth.apiKeyCommand);
-      this._cachedKey = key;
-      return key;
+      // Coalesce concurrent calls
+      if (this._keyFetchPromise) {
+        return this._keyFetchPromise;
+      }
+      this._keyFetchPromise = this._execCommand(this._auth.apiKeyCommand)
+        .then((key) => {
+          this._cachedKey = key;
+          return key;
+        })
+        .finally(() => {
+          this._keyFetchPromise = null;
+        });
+      return this._keyFetchPromise;
     }
 
     return null;
@@ -490,42 +565,55 @@ Add to `src/lib/providers/custom-provider.ts`:
 ```typescript
 // Add import at top:
 import { ClientError, AuthError, ConfigError } from "../types.js";
+import type { ChatRequest, ChatResponse, StreamChunk, ModelInfo } from "../types.js";
 
 // Add to class body:
 private _keyRefreshed = false;
 
 /**
- * Override to intercept 401/403 and attempt key refresh before throwing.
- * If apiKeyCommand is set and we haven't already refreshed, invalidate
- * the cached key, re-run the command, and throw a recoverable error
- * so the retry loop retries with the new key.
+ * Override to intercept 401 (and 403 without rate-limit header) and attempt
+ * key refresh before throwing. If apiKeyCommand is set and we haven't already
+ * refreshed, invalidate the cached key, re-run the command, and throw a
+ * recoverable error so the retry loop retries with the new key.
+ *
+ * 403 with x-ratelimit-reset header is NOT an auth error — skip refresh
+ * and delegate to base class rate-limit handling.
  */
 protected override async handleErrorResponse(response: Response): Promise<never> {
+  // Skip refresh for rate-limited 403s
+  const isRateLimited = response.status === 403 && response.headers.get("x-ratelimit-reset");
+  const isAuthError = (response.status === 401 || (response.status === 403 && !isRateLimited));
+
   if (
-    (response.status === 401 || response.status === 403) &&
+    isAuthError &&
     this._auth.apiKeyCommand &&
     !this._keyRefreshed
   ) {
-    // Invalidate and refresh
+    // Invalidate and attempt refresh
     this._cachedKey = null;
     try {
       this._cachedKey = await this._execCommand(this._auth.apiKeyCommand);
-    } catch {
-      // If command fails, fall through to normal error handling
-    }
-    this._keyRefreshed = true;
+      // Only set flag if command succeeded — don't burn the retry on a failed command
+      this._keyRefreshed = true;
 
-    // Throw recoverable so retry() picks it up
-    const err = new ClientError(
-      "auth_refresh",
-      "Refreshing API key and retrying",
-      true,
-    );
-    err.status = response.status;
-    throw err;
+      // Throw recoverable so retry() picks it up
+      const err = new ClientError(
+        "auth_refresh",
+        "Refreshing API key and retrying",
+        true,
+      );
+      err.status = response.status;
+      throw err;
+    } catch (refreshErr) {
+      // If it's our auth_refresh error, re-throw it
+      if (refreshErr instanceof ClientError && refreshErr.code === "auth_refresh") {
+        throw refreshErr;
+      }
+      // Command failed — fall through to normal error handling
+    }
   }
 
-  // Second failure after refresh, or no command — use default handling
+  // Second failure after refresh, no command, or command failed — use default handling
   return super.handleErrorResponse(response);
 }
 
@@ -538,19 +626,20 @@ protected override shouldRetry(error: ClientError): boolean {
 }
 ```
 
-Also add to `chat()` override or wrap with reset logic — reset `_keyRefreshed` on successful response. The simplest approach: override `chat()`:
+Override both `chat()` and `chatStream()` to reset `_keyRefreshed` at the START of each call.
+Resetting at start (not after success) avoids the problem where `chatStream()` is not retried
+by the base class and would leave the flag permanently set:
 
 ```typescript
 override async chat(request: ChatRequest): Promise<ChatResponse> {
-  const result = await super.chat(request);
-  this._keyRefreshed = false; // reset on success
-  return result;
+  this._keyRefreshed = false; // reset at start of each top-level call
+  return super.chat(request);
 }
-```
 
-Add the `ChatRequest` and `ChatResponse` imports:
-```typescript
-import type { ChatRequest, ChatResponse, ModelInfo } from "../types.js";
+override async *chatStream(request: ChatRequest): AsyncIterable<StreamChunk> {
+  this._keyRefreshed = false; // reset at start of each top-level call
+  yield* super.chatStream(request);
+}
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -759,6 +848,28 @@ describe("createProvider — custom", () => {
       return err instanceof ConfigError && (err as ConfigError).code === "unknown_provider";
     });
   });
+
+  it("throws ConfigError for 'custom:nonexistent' when providerOptions lacks that key", async () => {
+    await expect(
+      createProvider({ ...baseConfig, provider: "custom:nonexistent", providerOptions: {} })
+    ).rejects.toSatisfy((err: unknown) => {
+      return err instanceof ConfigError && (err as ConfigError).code === "missing_provider_config";
+    });
+  });
+
+  it("bare 'custom' skips builtin 'ollama' entry in providerOptions fallback", async () => {
+    const provider = await createProvider({
+      ...baseConfig,
+      provider: "custom",
+      providerOptions: {
+        ollama: { baseUrl: "http://localhost:11434" },
+        openrouter: { baseUrl: "https://openrouter.ai/api/v1" },
+      },
+    });
+    expect(CustomProvider).toHaveBeenCalledTimes(1);
+    // Should pick openrouter, not ollama
+    expect((CustomProvider as any).mock.calls[0][1]).toBe("https://openrouter.ai/api/v1");
+  });
 });
 ```
 
@@ -963,6 +1074,18 @@ describe("custom provider env vars", () => {
     delete process.env["LLM_REVIEWER_BASE_URL"];
   });
 
+  it("LLM_REVIEWER_API_KEY takes precedence over LLM_REVIEWER_API_KEY_COMMAND", async () => {
+    process.env["LLM_REVIEWER_API_KEY"] = "sk-static-wins";
+    process.env["LLM_REVIEWER_API_KEY_COMMAND"] = "echo sk-should-not-be-used";
+    process.env["LLM_REVIEWER_BASE_URL"] = "https://api.example.com/v1";
+    const config = await loadConfig({ provider: "custom" });
+    expect((config.providerOptions.custom as any)?.apiKey).toBe("sk-static-wins");
+    expect((config.providerOptions.custom as any)?.apiKeyCommand).toBeUndefined();
+    delete process.env["LLM_REVIEWER_API_KEY"];
+    delete process.env["LLM_REVIEWER_API_KEY_COMMAND"];
+    delete process.env["LLM_REVIEWER_BASE_URL"];
+  });
+
   it("--base-url CLI override takes precedence over env var", async () => {
     process.env["LLM_REVIEWER_BASE_URL"] = "https://env.example.com/v1";
     const config = await loadConfig({ provider: "custom", baseUrl: "https://cli.example.com/v1" });
@@ -1001,7 +1124,10 @@ export interface CLIOverrides {
 In `src/lib/config.ts`, add after the existing `envOllamaUrl` block (around line 98):
 
 ```typescript
-  // Custom provider env vars
+  // Custom provider env vars — these always populate providerOptions.custom.
+  // Named providers (custom:groq) read from providerOptions.<suffix>, not .custom,
+  // so these env vars only affect bare "custom" usage. This is by design — named
+  // providers are self-contained in config.
   const envBaseUrl = process.env["LLM_REVIEWER_BASE_URL"];
   const envApiKey = process.env["LLM_REVIEWER_API_KEY"];
   const envApiKeyCommand = process.env["LLM_REVIEWER_API_KEY_COMMAND"];
@@ -1015,15 +1141,15 @@ In `src/lib/config.ts`, add after the existing `envOllamaUrl` block (around line
     };
   }
 
+  // LLM_REVIEWER_API_KEY takes precedence over LLM_REVIEWER_API_KEY_COMMAND.
+  // If static key is set, use it and ignore command. If only command is set, use command.
   if (envApiKey !== undefined) {
     const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
     config.providerOptions = {
       ...config.providerOptions,
       custom: { ...existing, apiKey: envApiKey },
     };
-  }
-
-  if (envApiKeyCommand !== undefined) {
+  } else if (envApiKeyCommand !== undefined) {
     const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
     config.providerOptions = {
       ...config.providerOptions,
@@ -1209,41 +1335,76 @@ git commit -m "fix: suppress unknown providerOptions warning for custom provider
 
 ---
 
-### Task 9: Provider-specific timeout default for custom
+### Task 9: Verify timeout default — no change needed
+
+Custom providers keep the default 30s timeout (same as Copilot). Cloud APIs (OpenRouter, Groq)
+are fast — 30s is appropriate. Users deploying local models should set `--timeout 120` explicitly.
+No code changes needed. The README (Task 11) will document this.
+
+- [ ] **Step 1: Verify no timeout override exists for custom**
+
+Confirm `config.ts` timeout section only overrides for `ollama`. No changes needed.
+
+- [ ] **Step 2: Mark complete**
+
+---
+
+### Task 10: model=auto guard for custom providers
 
 **Files:**
-- Modify: `src/lib/config.ts`
+- Modify: `src/lib/review.ts` (or wherever model selection happens)
+- Modify: `test/lib/providers/custom-provider.test.ts`
 
-- [ ] **Step 1: Add timeout default for custom providers**
+Custom providers have no `autoSelect()`. The default config is `model: "auto"`. If a user
+runs `--provider custom` without `--model`, the review flow must fail with a clear error
+instead of crashing deep in the provider.
 
-In `src/lib/config.ts`, update the provider-specific timeout section (around line 176):
+- [ ] **Step 1: Find where model=auto is resolved**
+
+Grep for `autoSelect` and `model.*auto` in `src/lib/review.ts` and `src/cli.ts` to find
+the exact location where auto-selection happens.
+
+- [ ] **Step 2: Write failing test**
+
+Add test that `model=auto` with a provider lacking `autoSelect()` throws `ConfigError`:
 
 ```typescript
-  // Provider-specific timeout defaults (if not overridden by CLI/config)
-  if (config.timeout === 30) {
-    if (config.provider === "ollama") {
-      config.timeout = 120;
-    } else if (config.provider === "custom" || config.provider.startsWith("custom:")) {
-      config.timeout = 120; // custom endpoints may be slow (local models, rate-limited APIs)
-    }
-  }
+it("throws ConfigError when model is 'auto' and provider has no autoSelect", async () => {
+  // This test depends on the review flow, not the provider itself.
+  // Verify the error message guides the user to set --model explicitly.
+});
 ```
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 3: Add guard**
+
+At the point where `model === "auto"` is handled, add:
+
+```typescript
+if (config.model === "auto" && !provider.autoSelect) {
+  throw new ConfigError(
+    "model_required",
+    `Custom provider requires an explicit model. Set --model or add "model": "<name>" to your config. Run "llm-reviewer models --provider ${config.provider}" to list available models.`,
+    "",
+    false,
+  );
+}
+```
+
+- [ ] **Step 4: Run tests**
 
 Run: `npx vitest run`
 Expected: All tests PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/lib/config.ts
-git commit -m "feat: set 120s default timeout for custom providers"
+git add src/lib/review.ts test/lib/providers/custom-provider.test.ts
+git commit -m "feat: fail with clear error when model=auto and provider has no autoSelect"
 ```
 
 ---
 
-### Task 10: Full integration verification
+### Task 11: Full integration verification
 
 - [ ] **Step 1: Run complete test suite**
 
@@ -1277,7 +1438,7 @@ git commit -m "fix: integration fixes from smoke testing"
 
 ---
 
-### Task 11: README — custom provider documentation
+### Task 12: README — custom provider documentation
 
 **Files:**
 - Modify: `README.md`
@@ -1288,8 +1449,11 @@ Add a "Custom Provider" section with:
 - Configuration examples (config file, env vars, CLI flags)
 - Popular endpoints reference table (OpenRouter, Groq, Together AI, Fireworks, LM Studio, vLLM)
 - Usage examples (bare custom, named custom, apiKeyCommand)
+- **Security note**: `apiKeyCommand` executes shell commands — review project configs before running in untrusted repos. Don't commit static `apiKey` to version control.
+- **baseUrl note**: Custom provider expects the full URL including `/v1` path. Troubleshooting: if 404, check baseUrl includes `/v1`.
+- **Timeout note**: Cloud APIs default to 30s. For local models, set `--timeout 120`.
 
-Use the content from the spec's "Documentation" section.
+Use the content from the spec's "Documentation" and "Security" sections.
 
 - [ ] **Step 2: Commit**
 

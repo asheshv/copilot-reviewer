@@ -31,13 +31,19 @@ When `--provider custom` is used (no suffix):
 ### Auth: cache-until-failure
 
 - Auth key is cached in memory for the session
-- On 401/403 response: invalidate cache, re-run key command, retry once
-- Second 401/403 after refresh: throw `AuthError` (no loop)
+- On 401 response (or 403 without `x-ratelimit-reset` header): invalidate cache, re-run key command, retry once
+- 403 with `x-ratelimit-reset` header: skip refresh, delegate to base class rate-limit handling
+- Second auth failure after refresh: throw `AuthError` for 401, `ClientError` for 403 (no loop)
 - If no key and no command configured: no `Authorization` header (supports unauthenticated local endpoints)
+
+### Explicit model required
+
+Model must always be specified explicitly via `--model` or config file `model` field. There is no auto-select for custom providers. If `model` is `"auto"` (the default) and the provider has no `autoSelect()`, the review flow must throw a clear `ConfigError`:
+> "Custom provider requires an explicit model. Set --model or add \"model\": \"<name>\" to your config."
 
 ### No `autoSelect()`
 
-Model must always be specified explicitly via `--model` or config file `model` field. There is no auto-select for custom providers.
+See "Explicit model required" above.
 
 ### `listModels()`: best-effort
 
@@ -96,18 +102,38 @@ class CustomProvider extends OpenAIChatProvider {
 
 **Key refresh on auth failure:**
 
-Override `handleErrorResponse()`. On 401/403, before delegating to `super.handleErrorResponse()`:
+Override `handleErrorResponse()`. On 401, or 403 without `x-ratelimit-reset` header:
 - If `_apiKeyCommand` is set and `_keyRefreshed` is false:
   - Set `_cachedKey = null`, re-run command to populate `_cachedKey`
-  - Set `_keyRefreshed = true`
+  - Only if command succeeds: set `_keyRefreshed = true`
+  - If command fails: fall through to `super.handleErrorResponse()`
   - Throw a **recoverable** `ClientError` (code `"auth_refresh"`)
   - The existing `retry()` loop in `OpenAIChatProvider` will re-attempt the request,
     which calls `getHeaders()` again, picking up the refreshed key
 - If `_keyRefreshed` is already true (second failure after refresh):
-  - Fall through to `super.handleErrorResponse()` which throws `AuthError` (non-recoverable)
-- `_keyRefreshed` is reset to `false` after any successful `chat()` / `chatStream()` response
+  - Fall through to `super.handleErrorResponse()` which throws `AuthError` for 401, `ClientError` for 403
+- `_keyRefreshed` is reset to `false` at the START of both `chat()` and `chatStream()` calls
+  (not after success — this avoids the chatStream-never-resets problem since chatStream is not retried)
 
 Note: `shouldRetry()` must be overridden to treat `"auth_refresh"` as retryable.
+
+**Concurrent key resolution:**
+
+`_resolveKey()` must coalesce concurrent calls. Use a `_keyFetchPromise` field:
+- If `_keyFetchPromise` is non-null, await it instead of re-executing the command
+- Set `_keyFetchPromise` before executing, clear it in `finally`
+
+**Key resolution precedence within the provider:**
+
+The `CustomProvider` constructor receives pre-resolved auth from the factory. The factory
+resolves auth using this precedence (env vars override config file values):
+1. `LLM_REVIEWER_API_KEY` env var → `apiKey`
+2. `LLM_REVIEWER_API_KEY_COMMAND` env var → `apiKeyCommand`
+3. `providerOptions.<name>.apiKey` → `apiKey`
+4. `providerOptions.<name>.apiKeyCommand` → `apiKeyCommand`
+
+When both `apiKey` and `apiKeyCommand` are present, `apiKeyCommand` wins (dynamic over static).
+The provider only sees the final resolved values.
 
 ### Factory changes: `src/lib/providers/index.ts`
 
@@ -141,6 +167,12 @@ interface ConfigFile {
 
 The `[key: string]` index signature already exists. `CustomProvider` reads `baseUrl`, `apiKey`, `apiKeyCommand` from the matched entry.
 
+### Timeout default
+
+Custom providers keep the default 30s timeout (same as Copilot). Cloud APIs are fast; users
+deploying local models should set `--timeout 120` or `"timeout": 120` in config.
+No blanket 120s override — that penalizes cloud API users with unnecessary wait on timeouts.
+
 ### CLI changes: `src/cli.ts`
 
 - Add `--base-url <url>` flag to `review`, `models`, `status` commands
@@ -170,6 +202,22 @@ interface CLIOverrides {
 2. `LLM_REVIEWER_BASE_URL` env var
 3. `providerOptions.<name>.baseUrl` (config file)
 4. `ConfigError` — required, no default
+
+## Security
+
+### Config file trust model
+
+- **Global config** (`~/.llm-reviewer/`) is trusted — you wrote it.
+- **Project config** (`<git-root>/.llm-reviewer/`) is treated as CODE — review before running in untrusted repos.
+- `apiKeyCommand` executes shell commands with full user permissions. Treat it like `package.json` scripts.
+- Do NOT store static `apiKey` in project config files that may be committed to version control. Prefer `apiKeyCommand` or `LLM_REVIEWER_API_KEY` env var.
+- Keys must never appear in error messages or logs. Use redaction for any key-adjacent error output.
+
+### baseUrl note
+
+Custom provider expects the full base URL including the path prefix (e.g., `https://api.groq.com/openai/v1`).
+This differs from `OllamaProvider` which takes a root URL and appends `/v1` internally.
+If requests fail with 404, check that baseUrl includes `/v1` or the provider's equivalent path.
 
 ## Documentation
 
