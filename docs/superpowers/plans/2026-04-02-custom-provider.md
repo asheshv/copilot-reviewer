@@ -263,12 +263,15 @@ export class CustomProvider extends OpenAIChatProvider {
    */
 
   async listModels(): Promise<ModelInfo[]> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10_000);
     try {
       const headers = await this.getHeaders();
       const response = await fetch(`${this.baseUrl}/models`, {
         headers: { ...headers, "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(10_000),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         return [];
@@ -288,6 +291,7 @@ export class CustomProvider extends OpenAIChatProvider {
         tokenizer: "unknown",
       }));
     } catch {
+      clearTimeout(timeoutId);
       return [];
     }
   }
@@ -1369,7 +1373,11 @@ In `src/lib/config.ts`, update the unknown key warning (around line 241-245):
           // Suppress warning if this looks like a custom provider config (has baseUrl)
           const entry = jsonConfig.providerOptions[key];
           if (entry && typeof entry === "object" && "baseUrl" in entry) {
-            continue; // Valid custom provider config — don't warn
+            // Valid custom provider config — validate baseUrl, don't warn
+            if (typeof (entry as Record<string, unknown>).baseUrl === "string") {
+              validateUrl((entry as Record<string, unknown>).baseUrl as string, jsonPath);
+            }
+            continue;
           }
           const suggestion = knownKeys.find((k) => levenshtein(key, k) <= 2);
           const hint = suggestion ? ` Did you mean '${suggestion}'?` : "";
