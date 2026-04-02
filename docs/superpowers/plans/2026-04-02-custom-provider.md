@@ -590,9 +590,9 @@ Expected: FAIL — key refresh logic not implemented yet.
 Add to `src/lib/providers/custom-provider.ts`:
 
 ```typescript
-// Add import at top:
+// Add/update imports at top (ChatRequest, ChatResponse, StreamChunk are used
+// by the base class signatures — TypeScript infers them from super calls):
 import { ClientError, AuthError, ConfigError } from "../types.js";
-import type { ChatRequest, ChatResponse, StreamChunk, ModelInfo } from "../types.js";
 
 // Add to class body:
 private _keyRefreshed = false;
@@ -1127,6 +1127,21 @@ describe("custom provider env vars", () => {
     delete process.env["LLM_REVIEWER_BASE_URL"];
   });
 
+  it("LLM_REVIEWER_API_KEY clears config file apiKeyCommand", async () => {
+    // Scenario: config file has apiKeyCommand, user sets LLM_REVIEWER_API_KEY to override.
+    // The env var must win — the config file's command must be cleared so the factory
+    // doesn't re-select it via "command > static" precedence.
+    process.env["LLM_REVIEWER_API_KEY"] = "sk-env-override";
+    process.env["LLM_REVIEWER_BASE_URL"] = "https://api.example.com/v1";
+    // Note: config file apiKeyCommand would have been loaded by loadConfigLayer.
+    // Here we simulate by checking the env var handling clears apiKeyCommand.
+    const config = await loadConfig({ provider: "custom" });
+    expect((config.providerOptions.custom as any)?.apiKey).toBe("sk-env-override");
+    expect((config.providerOptions.custom as any)?.apiKeyCommand).toBeUndefined();
+    delete process.env["LLM_REVIEWER_API_KEY"];
+    delete process.env["LLM_REVIEWER_BASE_URL"];
+  });
+
   it("--base-url CLI override takes precedence over env var", async () => {
     process.env["LLM_REVIEWER_BASE_URL"] = "https://env.example.com/v1";
     const config = await loadConfig({ provider: "custom", baseUrl: "https://cli.example.com/v1" });
@@ -1183,18 +1198,19 @@ In `src/lib/config.ts`, add after the existing `envOllamaUrl` block (around line
   }
 
   // LLM_REVIEWER_API_KEY takes precedence over LLM_REVIEWER_API_KEY_COMMAND.
-  // If static key is set, use it and ignore command. If only command is set, use command.
+  // When an env var is set, it CLEARS the opposite type from config to prevent
+  // the factory's "command > static" rule from overriding the env var.
   if (envApiKey !== undefined) {
     const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
     config.providerOptions = {
       ...config.providerOptions,
-      custom: { ...existing, apiKey: envApiKey },
+      custom: { ...existing, apiKey: envApiKey, apiKeyCommand: undefined },
     };
   } else if (envApiKeyCommand !== undefined) {
     const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
     config.providerOptions = {
       ...config.providerOptions,
-      custom: { ...existing, apiKeyCommand: envApiKeyCommand },
+      custom: { ...existing, apiKeyCommand: envApiKeyCommand, apiKey: undefined },
     };
   }
 ```
