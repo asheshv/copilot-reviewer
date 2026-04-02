@@ -133,7 +133,7 @@ resolves auth using this precedence (env vars override config file values):
 4. `providerOptions.<name>.apiKeyCommand` → `apiKeyCommand`
 
 When both `apiKey` and `apiKeyCommand` are present, `apiKeyCommand` wins (dynamic over static).
-The provider only sees the final resolved values.
+The factory resolves this precedence — provider receives EITHER `apiKey` OR `apiKeyCommand`, never both.
 
 ### Factory changes: `src/lib/providers/index.ts`
 
@@ -212,6 +212,7 @@ interface CLIOverrides {
 - `apiKeyCommand` executes shell commands with full user permissions. Treat it like `package.json` scripts.
 - Do NOT store static `apiKey` in project config files that may be committed to version control. Prefer `apiKeyCommand` or `LLM_REVIEWER_API_KEY` env var.
 - Keys must never appear in error messages or logs. Use redaction for any key-adjacent error output.
+- `apiKeyCommand` strings must NOT appear in error messages — the command may contain embedded secrets (e.g., `echo $SECRET_VAR`, credential paths). Show only error context ("command failed", "empty output"), never the command itself.
 
 ### baseUrl note
 
@@ -278,9 +279,12 @@ llm-reviewer review --provider custom --model google/gemini-2.5-flash
 
 | File | Change |
 |------|--------|
-| `src/lib/providers/custom-provider.ts` | New (~150 lines) |
-| `src/lib/providers/index.ts` | Add custom provider factory + `custom:` prefix parsing |
+| `src/lib/providers/custom-provider.ts` | New (~180 lines) |
+| `test/lib/providers/custom-provider.test.ts` | New — unit tests |
+| `src/lib/providers/index.ts` | Add custom provider factory + `custom:` prefix parsing + apiKey/apiKeyCommand precedence |
+| `test/lib/providers/index.test.ts` | Add factory tests for custom provider |
 | `src/lib/types.ts` | Add `baseUrl` to `CLIOverrides` |
-| `src/cli.ts` | Add `--base-url` flag, update `--provider` help text, env var handling |
-| `README.md` | Custom provider docs, endpoint reference table, usage examples |
-| `src/lib/providers/custom-provider.test.ts` | New — unit tests |
+| `src/lib/config.ts` | Handle `LLM_REVIEWER_API_KEY`, `LLM_REVIEWER_API_KEY_COMMAND`, `LLM_REVIEWER_BASE_URL` env vars; suppress unknown providerOptions warning for custom entries |
+| `test/lib/config.test.ts` | Add tests for new env vars and CLI override |
+| `src/cli.ts` | Add `--base-url` flag, update `--provider` help text |
+| `README.md` | Custom provider docs, endpoint reference table, security notes, usage examples |

@@ -341,7 +341,7 @@ export class CustomProvider extends OpenAIChatProvider {
       if (!trimmed) {
         throw new ConfigError(
           "key_command_empty",
-          `API key command produced empty output: '${command}'`,
+          `API key command produced empty output (command configured but returned nothing)`,
           "",
           false,
         );
@@ -351,7 +351,7 @@ export class CustomProvider extends OpenAIChatProvider {
       if (err instanceof ConfigError) throw err;
       throw new ConfigError(
         "key_command_failed",
-        `API key command failed: '${command}' — ${err instanceof Error ? err.message : String(err)}`,
+        `API key command failed: ${err instanceof Error ? err.message : String(err)}`,
         "",
         false,
         err instanceof Error ? err : undefined,
@@ -415,13 +415,40 @@ describe("getHeaders() with apiKeyCommand", () => {
     );
   });
 
-  it("throws ConfigError when command produces empty output", async () => {
+  it("throws ConfigError when command produces empty output (redacted message)", async () => {
     const provider = new CustomProvider("custom", BASE_URL, {
       apiKeyCommand: "echo ''",
     });
     await expect((provider as any).getHeaders()).rejects.toSatisfy(
-      (err: unknown) => err instanceof ConfigError && (err as ConfigError).code === "key_command_empty"
+      (err: unknown) => {
+        if (!(err instanceof ConfigError)) return false;
+        if (err.code !== "key_command_empty") return false;
+        // Command string must NOT appear in error message
+        if (err.message.includes("echo")) return false;
+        return true;
+      }
     );
+  });
+
+  it("coalesces concurrent apiKeyCommand calls — only one execution", async () => {
+    let execCount = 0;
+    const provider = new CustomProvider("custom", BASE_URL, {
+      apiKeyCommand: "echo sk-test",
+    });
+    (provider as any)._execCommand = async () => {
+      execCount++;
+      await new Promise(resolve => setTimeout(resolve, 50));
+      return `sk-key-${execCount}`;
+    };
+
+    const [h1, h2] = await Promise.all([
+      (provider as any).getHeaders(),
+      (provider as any).getHeaders(),
+    ]);
+
+    expect(execCount).toBe(1);
+    expect(h1).toEqual(h2);
+    expect(h1).toEqual({ Authorization: "Bearer sk-key-1" });
   });
 
   it("trims whitespace from command output", async () => {
@@ -591,6 +618,7 @@ protected override async handleErrorResponse(response: Response): Promise<never>
   ) {
     // Invalidate and attempt refresh
     this._cachedKey = null;
+    this._keyFetchPromise = null; // clear stale promise to prevent races
     try {
       this._cachedKey = await this._execCommand(this._auth.apiKeyCommand);
       // Only set flag if command succeeded — don't burn the retry on a failed command
@@ -609,7 +637,11 @@ protected override async handleErrorResponse(response: Response): Promise<never>
       if (refreshErr instanceof ClientError && refreshErr.code === "auth_refresh") {
         throw refreshErr;
       }
-      // Command failed — fall through to normal error handling
+      // Command failed with ConfigError — user needs to see this, not the HTTP 401
+      if (refreshErr instanceof ConfigError) {
+        throw refreshErr;
+      }
+      // Unexpected error — fall through to normal error handling
     }
   }
 
@@ -930,33 +962,42 @@ function resolveCustomConfig(
         false,
       );
     }
+    // Resolve apiKey/apiKeyCommand precedence: command wins over static key.
+    // Provider receives EITHER apiKey OR apiKeyCommand, never both.
+    const apiKey = opts.apiKeyCommand ? undefined : (opts.apiKey as string | undefined);
+    const apiKeyCommand = opts.apiKeyCommand as string | undefined;
     return {
       name: providerName,
       baseUrl: opts.baseUrl as string,
-      apiKey: opts.apiKey as string | undefined,
-      apiKeyCommand: opts.apiKeyCommand as string | undefined,
+      apiKey,
+      apiKeyCommand,
     };
   }
 
   // Bare "custom" — check providerOptions.custom first
   const customOpts = config.providerOptions?.custom as Record<string, unknown> | undefined;
   if (customOpts?.baseUrl) {
+    const apiKey = customOpts.apiKeyCommand ? undefined : (customOpts.apiKey as string | undefined);
+    const apiKeyCommand = customOpts.apiKeyCommand as string | undefined;
     return {
       name: "custom",
       baseUrl: customOpts.baseUrl as string,
-      apiKey: customOpts.apiKey as string | undefined,
-      apiKeyCommand: customOpts.apiKeyCommand as string | undefined,
+      apiKey,
+      apiKeyCommand,
     };
   }
 
   // Fall back to first non-builtin providerOptions entry
   for (const [key, val] of Object.entries(config.providerOptions ?? {})) {
     if (!BUILTIN_NAMES.has(key) && val && typeof val === "object" && "baseUrl" in val) {
+      const entry = val as Record<string, unknown>;
+      const apiKey = entry.apiKeyCommand ? undefined : (entry.apiKey as string | undefined);
+      const apiKeyCommand = entry.apiKeyCommand as string | undefined;
       return {
         name: "custom",
-        baseUrl: (val as Record<string, unknown>).baseUrl as string,
-        apiKey: (val as Record<string, unknown>).apiKey as string | undefined,
-        apiKeyCommand: (val as Record<string, unknown>).apiKeyCommand as string | undefined,
+        baseUrl: entry.baseUrl as string,
+        apiKey,
+        apiKeyCommand,
       };
     }
   }
@@ -1349,58 +1390,20 @@ Confirm `config.ts` timeout section only overrides for `ollama`. No changes need
 
 ---
 
-### Task 10: model=auto guard for custom providers
+### Task 10: Verify model=auto guard already exists
 
-**Files:**
-- Modify: `src/lib/review.ts` (or wherever model selection happens)
-- Modify: `test/lib/providers/custom-provider.test.ts`
+The guard for `model=auto` with providers lacking `autoSelect()` already exists at
+`src/lib/review.ts:643-651`. No new code needed.
 
-Custom providers have no `autoSelect()`. The default config is `model: "auto"`. If a user
-runs `--provider custom` without `--model`, the review flow must fail with a clear error
-instead of crashing deep in the provider.
+- [ ] **Step 1: Verify guard exists**
 
-- [ ] **Step 1: Find where model=auto is resolved**
+Run: `grep -n "autoSelect" src/lib/review.ts`
+Expected: Shows existing guard that throws ConfigError when model is "auto" and provider has no autoSelect.
 
-Grep for `autoSelect` and `model.*auto` in `src/lib/review.ts` and `src/cli.ts` to find
-the exact location where auto-selection happens.
+- [ ] **Step 2: Verify existing tests cover it**
 
-- [ ] **Step 2: Write failing test**
-
-Add test that `model=auto` with a provider lacking `autoSelect()` throws `ConfigError`:
-
-```typescript
-it("throws ConfigError when model is 'auto' and provider has no autoSelect", async () => {
-  // This test depends on the review flow, not the provider itself.
-  // Verify the error message guides the user to set --model explicitly.
-});
-```
-
-- [ ] **Step 3: Add guard**
-
-At the point where `model === "auto"` is handled, add:
-
-```typescript
-if (config.model === "auto" && !provider.autoSelect) {
-  throw new ConfigError(
-    "model_required",
-    `Custom provider requires an explicit model. Set --model or add "model": "<name>" to your config. Run "llm-reviewer models --provider ${config.provider}" to list available models.`,
-    "",
-    false,
-  );
-}
-```
-
-- [ ] **Step 4: Run tests**
-
-Run: `npx vitest run`
-Expected: All tests PASS.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/lib/review.ts test/lib/providers/custom-provider.test.ts
-git commit -m "feat: fail with clear error when model=auto and provider has no autoSelect"
-```
+Run: `npx vitest run test/lib/review.test.ts`
+Expected: All tests PASS, including model resolution tests.
 
 ---
 
