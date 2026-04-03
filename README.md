@@ -1,6 +1,6 @@
 # llm-reviewer
 
-Review code changes using LLMs — CLI + MCP server for any AI agent. Supports GitHub Copilot and local Ollama models.
+Review code changes using LLMs — CLI + MCP server for any AI agent. Supports GitHub Copilot, local Ollama models, and any OpenAI-compatible endpoint.
 
 ## Installation
 
@@ -26,6 +26,11 @@ llm-reviewer pr 123
 
 # Review with a local Ollama model
 llm-reviewer local --provider ollama --model qwen2.5-coder:14b
+
+# Review with any OpenAI-compatible endpoint
+LLM_REVIEWER_API_KEY="sk-..." llm-reviewer local \
+  --provider custom --base-url https://openrouter.ai/api/v1 \
+  --model google/gemini-2.5-flash
 ```
 
 ## CLI Usage
@@ -49,10 +54,11 @@ Options:
   --no-stream           Force buffered output
   --prompt <text>       Override review prompt
   --config <path>       Override config file path
-  --provider <name>     Review provider: copilot, ollama (default: copilot)
+  --provider <name>     Review provider: copilot, ollama, custom, custom:<name>
   --chunking <mode>     auto | always | never (default: auto)
-  --timeout <seconds>   Request timeout (default: 30 for copilot, 120 for ollama)
+  --timeout <seconds>   Request timeout (default: 30 for copilot/custom, 120 for ollama)
   --ollama-url <url>    Ollama base URL (default: http://localhost:11434)
+  --base-url <url>      Base URL for custom provider (OpenAI-compatible endpoint)
   --verbose             Enable debug logging to stderr
   --help                Show help
   --version             Show version
@@ -130,6 +136,103 @@ llm-reviewer local --provider ollama --ollama-url http://remote:11434 --model co
 llm-reviewer commits 1 --provider ollama --model qwen2.5-coder:14b --no-stream
 ```
 
+### Custom Provider (OpenAI-compatible)
+
+Connect to any endpoint that implements the OpenAI Chat Completions API — OpenRouter, Groq, Together AI, Fireworks, LM Studio, vLLM, etc.
+
+> The base URL must include the full API path (e.g., `https://api.groq.com/openai/v1`, not `https://api.groq.com`). If you get 404 errors, check that your URL includes `/v1` or the provider's equivalent path prefix.
+
+```bash
+# Quick start: API key via env var, endpoint via --base-url
+LLM_REVIEWER_API_KEY="sk-or-..." llm-reviewer local \
+  --provider custom --base-url https://openrouter.ai/api/v1 \
+  --model google/gemini-2.5-flash
+
+# Named provider from config file (see config example below)
+llm-reviewer local --provider custom:groq --model llama-3.3-70b-versatile
+
+# List models from a custom endpoint
+llm-reviewer models --provider custom --base-url https://api.groq.com/openai/v1
+
+# Dynamic auth with a shell command
+# Config: { "providerOptions": { "gcp": { "baseUrl": "https://...", "apiKeyCommand": "gcloud auth print-access-token" } } }
+llm-reviewer local --provider custom:gcp --model gemini-2.5-flash
+
+# Bare "custom" picks from providerOptions if --base-url is not set (see Named Configurations)
+llm-reviewer local --provider custom --model google/gemini-2.5-flash
+
+# Local endpoint (no auth required)
+llm-reviewer local --provider custom --base-url http://localhost:1234/v1 --model local-model
+```
+
+**Model is always required** for custom providers — there is no auto-select. Set `--model` or add `"model"` to your config file.
+
+#### Named Configurations
+
+Define multiple endpoints in your config file using `providerOptions`:
+
+```json
+{
+  "providerOptions": {
+    "groq": {
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "apiKeyCommand": "op read 'op://Dev/Groq/api-key'"
+    },
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKeyCommand": "cat ~/.config/openrouter/key"
+    }
+  }
+}
+```
+
+Then use them with `--provider custom:<name>`:
+
+```bash
+llm-reviewer local --provider custom:groq --model llama-3.3-70b-versatile
+llm-reviewer local --provider custom:openrouter --model anthropic/claude-sonnet-4
+```
+
+When using bare `--provider custom`, resolution order is:
+1. `--base-url` CLI flag or `LLM_REVIEWER_BASE_URL` env var
+2. `providerOptions.custom` entry
+3. First non-builtin `providerOptions` entry
+
+#### Authentication
+
+Custom providers support three auth modes:
+
+| Mode | Config field | Description |
+|------|-------------|-------------|
+| Static key | `apiKey` | Bearer token sent with every request |
+| Dynamic command | `apiKeyCommand` | Shell command executed to obtain a key; cached until auth failure |
+| No auth | _(omit both)_ | No `Authorization` header (for local endpoints) |
+
+When both `apiKey` and `apiKeyCommand` are present, `apiKeyCommand` wins (dynamic over static).
+
+On a 401 (or 403 without rate-limit header), the key is refreshed by re-running the command and the request is retried once.
+
+#### Popular OpenAI-compatible Endpoints
+
+| Provider | Base URL | Auth | Model examples |
+|----------|----------|------|----------------|
+| OpenRouter | `https://openrouter.ai/api/v1` | Bearer key | `google/gemini-2.5-flash`, `anthropic/claude-sonnet-4` |
+| Groq | `https://api.groq.com/openai/v1` | Bearer key | `llama-3.3-70b-versatile`, `mixtral-8x7b-32768` |
+| Together AI | `https://api.together.xyz/v1` | Bearer key | `meta-llama/Llama-3.3-70B-Instruct-Turbo` |
+| Fireworks | `https://api.fireworks.ai/inference/v1` | Bearer key | `accounts/fireworks/models/llama-v3p3-70b-instruct` |
+| LM Studio | `http://localhost:1234/v1` | None | Whatever model is loaded |
+| vLLM | `http://localhost:8000/v1` | None | Depends on deployment |
+
+#### Security Notes
+
+- **`apiKeyCommand`** executes shell commands with full user permissions. Treat it like `package.json` scripts — review project config files before running in untrusted repos.
+- **Do not** store static `apiKey` values in project config files that may be committed to version control. Use `apiKeyCommand` or `LLM_REVIEWER_API_KEY` env var instead.
+- API keys never appear in error messages. Command strings are redacted from all error output.
+
+#### Timeout
+
+Custom providers use the default 30s timeout (same as Copilot). Cloud APIs are fast. For local models behind a custom endpoint, set `--timeout 120` or `"timeout": 120` in config.
+
 ### Status Command
 
 Check provider connectivity, resolved configuration, and available models:
@@ -137,6 +240,7 @@ Check provider connectivity, resolved configuration, and available models:
 ```bash
 llm-reviewer status                         # default provider (copilot)
 llm-reviewer status --provider ollama       # check Ollama
+llm-reviewer status --provider custom:groq  # check custom endpoint
 llm-reviewer status --json                  # machine-readable output
 ```
 
@@ -237,7 +341,7 @@ You can also invoke it explicitly:
 /llm-reviewer
 ```
 
-The skill supports all providers (Copilot, Ollama), chunking, cross-model review, and the full CLI feature set. See [`skills/SKILL.md`](skills/SKILL.md) for the complete reference.
+The skill supports all providers (Copilot, Ollama, Custom), chunking, cross-model review, and the full CLI feature set. See [`skills/SKILL.md`](skills/SKILL.md) for the complete reference.
 
 ## Configuration
 
@@ -253,9 +357,14 @@ Configuration is loaded from multiple layers (lowest to highest precedence):
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `LLM_REVIEWER_PROVIDER` | Override provider | `ollama` |
+| `LLM_REVIEWER_PROVIDER` | Override provider | `ollama`, `custom` |
 | `LLM_REVIEWER_OLLAMA_URL` | Ollama base URL | `http://remote:11434` |
+| `LLM_REVIEWER_BASE_URL` | Custom provider base URL | `https://api.groq.com/openai/v1` |
+| `LLM_REVIEWER_API_KEY` | Custom provider API key (static) | `sk-...` |
+| `LLM_REVIEWER_API_KEY_COMMAND` | Shell command to obtain API key | `op read 'op://Dev/key'` |
 | `LLM_REVIEWER_CHUNKING` | Chunking mode (kill switch) | `never` |
+
+When both `LLM_REVIEWER_API_KEY` and `LLM_REVIEWER_API_KEY_COMMAND` are set, `API_KEY` takes precedence (env vars use static-over-dynamic ordering since the user explicitly set both). Within a config file, `apiKeyCommand` wins over `apiKey` (dynamic over static). These env vars only affect the bare `--provider custom`, not named providers like `custom:groq`.
 
 ### config.json Schema
 
@@ -272,6 +381,14 @@ Configuration is loaded from multiple layers (lowest to highest precedence):
   "providerOptions": {
     "ollama": {
       "baseUrl": "http://localhost:11434"
+    },
+    "groq": {
+      "baseUrl": "https://api.groq.com/openai/v1",
+      "apiKeyCommand": "op read 'op://Dev/Groq/api-key'"
+    },
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKeyCommand": "cat ~/.config/openrouter/key"
     }
   },
   "chunking": "auto",
@@ -288,8 +405,8 @@ Configuration is loaded from multiple layers (lowest to highest precedence):
 | `prompt` | string | — | Inline text or path to `.md` file (relative to config dir) |
 | `defaultBase` | string | `"main"` | Default base branch for `branch` mode |
 | `ignorePaths` | string[] | `[]` | Glob patterns to exclude from diffs (merged across layers) |
-| `provider` | string | `"copilot"` | Review provider: `copilot` or `ollama` |
-| `providerOptions` | object | `{}` | Provider-specific config (e.g., Ollama base URL) |
+| `provider` | string | `"copilot"` | Provider: `copilot`, `ollama`, `custom`, `custom:<name>` |
+| `providerOptions` | object | `{}` | Provider-specific config (Ollama URL, custom endpoints) |
 | `chunking` | string | `"auto"` | Chunking mode: `auto`, `always`, or `never` |
 | `timeout` | number | `30` | Request timeout in seconds (auto: 120 for Ollama) |
 
@@ -463,7 +580,7 @@ GitHub token is resolved in priority order. First match wins.
 
 The tool automatically exchanges your OAuth token for a session token and caches it for subsequent requests.
 
-**Note:** Authentication is only required for the Copilot provider. Ollama requires no auth.
+**Note:** GitHub token authentication is only required for the Copilot provider. Ollama requires no auth. Custom providers use their own auth (see [Custom Provider](#custom-provider-openai-compatible)).
 
 ### Setting Up Authentication
 
@@ -522,6 +639,7 @@ llm-reviewer/
 │       │   ├── openai-chat-provider.ts  # Shared OpenAI-compatible base
 │       │   ├── copilot-provider.ts      # GitHub Copilot provider
 │       │   ├── ollama-provider.ts       # Ollama local provider
+│       │   ├── custom-provider.ts       # OpenAI-compatible custom provider
 │       │   └── index.ts           # Provider factory
 │       ├── auth.ts                # Token resolution + session exchange
 │       ├── chunking.ts            # Diff splitting + bin-packing
