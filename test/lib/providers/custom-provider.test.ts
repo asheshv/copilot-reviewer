@@ -83,6 +83,17 @@ describe("CustomProvider", () => {
       );
     });
 
+    it("does not leak command string in error message on failure", async () => {
+      const secretCommand = "echo $MY_SECRET_TOKEN && exit 1";
+      const provider = new CustomProvider("custom", BASE_URL, {
+        apiKeyCommand: secretCommand,
+      });
+      const err = await (provider as any).getHeaders().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ConfigError);
+      expect(err.message).not.toContain(secretCommand);
+      expect(err.message).not.toContain("MY_SECRET_TOKEN");
+    });
+
     it("throws ConfigError when command produces empty output (redacted message)", async () => {
       const provider = new CustomProvider("custom", BASE_URL, {
         apiKeyCommand: "echo ''",
@@ -279,6 +290,234 @@ describe("CustomProvider", () => {
       const provider = new CustomProvider("custom", BASE_URL, { apiKey: "sk-test" });
       await provider.listModels();
       expect(capturedAuth).toBe("Bearer sk-test");
+    });
+  });
+
+  describe("key refresh on 401/403", () => {
+    it("refreshes key on 401 and retries successfully", async () => {
+      let callCount = 0;
+      server.use(
+        http.post(`${BASE_URL}/chat/completions`, () => {
+          callCount++;
+          if (callCount === 1) {
+            return HttpResponse.json(
+              { error: { message: "Unauthorized" } },
+              { status: 401 }
+            );
+          }
+          return HttpResponse.json({
+            choices: [{ message: { role: "assistant", content: "Refreshed!" } }],
+            usage: { total_tokens: 5 },
+            model: "test-model",
+          });
+        })
+      );
+
+      let execCount = 0;
+      let keyVersion = 0;
+      const provider = new CustomProvider("custom", BASE_URL, {
+        apiKeyCommand: "echo placeholder",
+      });
+      (provider as any)._execCommand = async () => {
+        execCount++;
+        keyVersion++;
+        return `sk-key-v${keyVersion}`;
+      };
+
+      const response = await provider.chat({
+        model: "test-model",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "test" }],
+        stream: false,
+      });
+
+      expect(response.content).toBe("Refreshed!");
+      expect(execCount).toBe(2); // initial + refresh
+      expect(callCount).toBe(2); // first 401 + retry
+    });
+
+    it("throws after refresh still gets 401 (no infinite loop)", async () => {
+      server.use(
+        http.post(`${BASE_URL}/chat/completions`, () => {
+          return HttpResponse.json(
+            { error: { message: "Unauthorized" } },
+            { status: 401 }
+          );
+        })
+      );
+
+      const provider = new CustomProvider("custom", BASE_URL, {
+        apiKeyCommand: "echo sk-always-bad",
+      });
+
+      const err = await provider.chat({
+        model: "test-model",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "test" }],
+        stream: false,
+      }).catch((e) => e);
+
+      expect(err).toBeDefined();
+      expect(err.name).toMatch(/AuthError|ClientError/);
+    });
+
+    it("does not attempt refresh when no apiKeyCommand is configured", async () => {
+      let callCount = 0;
+      server.use(
+        http.post(`${BASE_URL}/chat/completions`, () => {
+          callCount++;
+          return HttpResponse.json(
+            { error: { message: "Unauthorized" } },
+            { status: 401 }
+          );
+        })
+      );
+
+      const provider = new CustomProvider("custom", BASE_URL, { apiKey: "sk-static" });
+
+      const err = await provider.chat({
+        model: "test-model",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "test" }],
+        stream: false,
+      }).catch((e) => e);
+
+      expect(err).toBeDefined();
+      // Should NOT have retried — static key can't be refreshed
+      // Base class retries on recoverable errors, but 401 is AuthError (not retryable)
+      expect(callCount).toBe(1);
+    });
+
+    it("refreshes key on 403 without x-ratelimit-reset header", async () => {
+      let callCount = 0;
+      server.use(
+        http.post(`${BASE_URL}/chat/completions`, () => {
+          callCount++;
+          if (callCount === 1) {
+            return HttpResponse.json(
+              { error: { message: "Forbidden" } },
+              { status: 403 }
+            );
+          }
+          return HttpResponse.json({
+            choices: [{ message: { role: "assistant", content: "OK" } }],
+            usage: { total_tokens: 5 },
+            model: "test-model",
+          });
+        })
+      );
+
+      const provider = new CustomProvider("custom", BASE_URL, {
+        apiKeyCommand: "echo placeholder",
+      });
+      let execCount = 0;
+      (provider as any)._execCommand = async () => {
+        execCount++;
+        return `sk-key-v${execCount}`;
+      };
+
+      const response = await provider.chat({
+        model: "test-model",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "test" }],
+        stream: false,
+      });
+
+      expect(response.content).toBe("OK");
+      expect(execCount).toBe(2); // initial + refresh
+    });
+
+    it("does NOT refresh on 403 with x-ratelimit-reset header (rate limit)", async () => {
+      server.use(
+        http.post(`${BASE_URL}/chat/completions`, () => {
+          return HttpResponse.json(
+            { error: { message: "Rate limited" } },
+            {
+              status: 403,
+              headers: {
+                "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 1),
+              },
+            }
+          );
+        })
+      );
+
+      let refreshCalled = false;
+      const provider = new CustomProvider("custom", BASE_URL, {
+        apiKeyCommand: "echo placeholder",
+      });
+      // Pre-cache a key so we can track if refresh is attempted
+      (provider as any)._cachedKey = "sk-initial";
+      (provider as any)._execCommand = async () => {
+        refreshCalled = true;
+        return "sk-refreshed";
+      };
+      // Eliminate retry backoff delays
+      (provider as any)._sleep = async () => {};
+
+      const err = await provider.chat({
+        model: "test-model",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "test" }],
+        stream: false,
+      }).catch((e) => e);
+
+      // Should have been treated as rate limit, not auth error
+      expect(err).toBeDefined();
+      expect(err.code).toBe("rate_limited");
+      // Key refresh should NOT have been attempted
+      expect(refreshCalled).toBe(false);
+    });
+
+    it("resets _keyRefreshed between separate chat() calls", async () => {
+      let callCount = 0;
+      server.use(
+        http.post(`${BASE_URL}/chat/completions`, () => {
+          callCount++;
+          // Odd calls fail with 401, even calls succeed
+          if (callCount % 2 === 1) {
+            return HttpResponse.json(
+              { error: { message: "Unauthorized" } },
+              { status: 401 }
+            );
+          }
+          return HttpResponse.json({
+            choices: [{ message: { role: "assistant", content: `Response ${callCount}` } }],
+            usage: { total_tokens: 5 },
+            model: "test-model",
+          });
+        })
+      );
+
+      let execCount = 0;
+      const provider = new CustomProvider("custom", BASE_URL, {
+        apiKeyCommand: "echo placeholder",
+      });
+      (provider as any)._execCommand = async () => {
+        execCount++;
+        return `sk-key-v${execCount}`;
+      };
+
+      // First chat() — 401, refresh, retry succeeds
+      const r1 = await provider.chat({
+        model: "test-model",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "test" }],
+        stream: false,
+      });
+      expect(r1.content).toBe("Response 2");
+
+      // Second chat() — 401, should also refresh (flag was reset)
+      const r2 = await provider.chat({
+        model: "test-model",
+        systemPrompt: "",
+        messages: [{ role: "user", content: "test" }],
+        stream: false,
+      });
+      expect(r2.content).toBe("Response 4");
+      // First call: 1 initial exec + 1 refresh exec = 2
+      // Second call: reuses cached key from refresh, then 401 triggers 1 refresh = 3 total
+      expect(execCount).toBe(3);
     });
   });
 

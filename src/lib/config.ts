@@ -200,6 +200,7 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
       };
     }
     if (cliOverrides.baseUrl !== undefined) {
+      validateUrl(cliOverrides.baseUrl, "--base-url");
       const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
       config.providerOptions = {
         ...config.providerOptions,

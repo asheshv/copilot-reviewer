@@ -148,6 +148,7 @@ export class CustomProvider extends OpenAIChatProvider {
 
   override dispose(): void {
     this._cachedKey = null;
+    this._keyFetchPromise = null;
     this._disposed = true;
   }
 
@@ -203,9 +204,15 @@ export class CustomProvider extends OpenAIChatProvider {
       return trimmed;
     } catch (err) {
       if (err instanceof ConfigError) throw err;
+      // Redact command string from error — execFile errors include the full
+      // command in err.message which may contain embedded secrets.
+      const exitCode = (err as any)?.code;
+      const redacted = typeof exitCode === "number"
+        ? `API key command exited with code ${exitCode}`
+        : "API key command failed (non-zero exit or signal)";
       throw new ConfigError(
         "key_command_failed",
-        `API key command failed: ${err instanceof Error ? err.message : String(err)}`,
+        redacted,
         "",
         false,
         err instanceof Error ? err : undefined,

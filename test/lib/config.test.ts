@@ -782,6 +782,26 @@ describe("loadConfig", () => {
 
       expect((config.providerOptions.custom as any)?.baseUrl).toBe("https://cli.example.com/v1");
     });
+
+    it("--base-url CLI override throws ConfigError for malformed URL", async () => {
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      await expect(loadConfig({ provider: "custom", baseUrl: "not-a-url" })).rejects.toMatchObject({
+        code: "invalid_url",
+        name: "ConfigError",
+      });
+    });
+
+    it("--base-url CLI override throws ConfigError for non-http scheme", async () => {
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      await expect(loadConfig({ provider: "custom", baseUrl: "file:///etc/passwd" })).rejects.toMatchObject({
+        code: "invalid_url",
+        name: "ConfigError",
+      });
+    });
   });
 
   describe("config file path resolution", () => {
