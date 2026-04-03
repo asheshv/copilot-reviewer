@@ -26,6 +26,21 @@ vi.mock("../../../src/lib/auth.js", () => ({
   }),
 }));
 
+vi.mock("../../../src/lib/providers/custom-provider.js", () => {
+  const MockCustomProvider = vi.fn().mockImplementation((name: string, baseUrl: string) => ({
+    name,
+    _baseUrl: baseUrl,
+    initialize: vi.fn().mockResolvedValue(undefined),
+    chat: vi.fn(),
+    chatStream: vi.fn(),
+    listModels: vi.fn(),
+    validateModel: vi.fn(),
+    dispose: vi.fn(),
+    healthCheck: vi.fn(),
+  }));
+  return { CustomProvider: MockCustomProvider };
+});
+
 vi.mock("../../../src/lib/providers/ollama-provider.js", () => {
   const MockOllamaProvider = vi.fn().mockImplementation((baseUrl: string) => ({
     name: "ollama",
@@ -50,6 +65,9 @@ const { CopilotProvider } = await import(
 );
 const { OllamaProvider } = await import(
   "../../../src/lib/providers/ollama-provider.js"
+);
+const { CustomProvider } = await import(
+  "../../../src/lib/providers/custom-provider.js"
 );
 
 const baseConfig: ResolvedConfig = {
@@ -175,5 +193,99 @@ describe("createProvider — ollama", () => {
   it("calls initialize() on the created OllamaProvider", async () => {
     const provider = await createProvider({ ...baseConfig, provider: "ollama" });
     expect(provider.initialize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createProvider — custom", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("creates CustomProvider for 'custom:groq' using providerOptions.groq", async () => {
+    const provider = await createProvider({
+      ...baseConfig,
+      provider: "custom:groq",
+      providerOptions: {
+        groq: { baseUrl: "https://api.groq.com/openai/v1", apiKey: "gsk-test" },
+      },
+    });
+    expect(CustomProvider).toHaveBeenCalledTimes(1);
+    expect(provider.name).toBe("custom:groq");
+  });
+
+  it("bare 'custom' falls back to first non-builtin providerOptions entry", async () => {
+    const provider = await createProvider({
+      ...baseConfig,
+      provider: "custom",
+      providerOptions: {
+        openrouter: { baseUrl: "https://openrouter.ai/api/v1" },
+      },
+    });
+    expect(CustomProvider).toHaveBeenCalledTimes(1);
+    expect(provider.name).toBe("custom");
+  });
+
+  it("bare 'custom' uses providerOptions.custom when present", async () => {
+    const provider = await createProvider({
+      ...baseConfig,
+      provider: "custom",
+      providerOptions: {
+        custom: { baseUrl: "https://api.example.com/v1" },
+      },
+    });
+    expect(CustomProvider).toHaveBeenCalledTimes(1);
+    expect(provider.name).toBe("custom");
+  });
+
+  it("throws ConfigError for 'custom' with no providerOptions and no baseUrl", async () => {
+    await expect(
+      createProvider({ ...baseConfig, provider: "custom", providerOptions: {} })
+    ).rejects.toSatisfy((err: unknown) => {
+      return err instanceof ConfigError;
+    });
+  });
+
+  it("throws ConfigError for unknown provider without custom: prefix", async () => {
+    await expect(
+      createProvider({ ...baseConfig, provider: "unknown" })
+    ).rejects.toSatisfy((err: unknown) => {
+      return err instanceof ConfigError && (err as ConfigError).code === "unknown_provider";
+    });
+  });
+
+  it("throws ConfigError for 'custom:nonexistent' when providerOptions lacks that key", async () => {
+    await expect(
+      createProvider({ ...baseConfig, provider: "custom:nonexistent", providerOptions: {} })
+    ).rejects.toSatisfy((err: unknown) => {
+      return err instanceof ConfigError && (err as ConfigError).code === "missing_provider_config";
+    });
+  });
+
+  it("bare 'custom' skips builtin 'ollama' entry in providerOptions fallback", async () => {
+    const provider = await createProvider({
+      ...baseConfig,
+      provider: "custom",
+      providerOptions: {
+        ollama: { baseUrl: "http://localhost:11434" },
+        openrouter: { baseUrl: "https://openrouter.ai/api/v1" },
+      },
+    });
+    expect(CustomProvider).toHaveBeenCalledTimes(1);
+    // Should pick openrouter, not ollama
+    expect((CustomProvider as any).mock.calls[0][1]).toBe("https://openrouter.ai/api/v1");
+  });
+
+  it("apiKeyCommand wins over apiKey in providerOptions", async () => {
+    await createProvider({
+      ...baseConfig,
+      provider: "custom:test",
+      providerOptions: {
+        test: { baseUrl: "https://api.test.com/v1", apiKey: "sk-static", apiKeyCommand: "echo sk-dynamic" },
+      },
+    });
+    // Factory should pass apiKeyCommand, not apiKey
+    const authArg = (CustomProvider as any).mock.calls[0][2];
+    expect(authArg.apiKeyCommand).toBe("echo sk-dynamic");
+    expect(authArg.apiKey).toBeUndefined();
   });
 });
