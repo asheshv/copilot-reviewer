@@ -97,6 +97,38 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     };
   }
 
+  // Custom provider env vars — populate providerOptions.custom for bare "custom" usage.
+  // Named providers (custom:groq) read from providerOptions.<suffix>, not .custom.
+  const envBaseUrl = process.env["LLM_REVIEWER_BASE_URL"];
+  const envApiKey = process.env["LLM_REVIEWER_API_KEY"];
+  const envApiKeyCommand = process.env["LLM_REVIEWER_API_KEY_COMMAND"];
+
+  if (envBaseUrl !== undefined) {
+    validateUrl(envBaseUrl, "LLM_REVIEWER_BASE_URL");
+    const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
+    config.providerOptions = {
+      ...config.providerOptions,
+      custom: { ...existing, baseUrl: envBaseUrl },
+    };
+  }
+
+  // LLM_REVIEWER_API_KEY takes precedence over LLM_REVIEWER_API_KEY_COMMAND.
+  // When an env var is set, clear the opposite type to prevent the factory's
+  // "command > static" rule from overriding the env var.
+  if (envApiKey !== undefined) {
+    const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
+    config.providerOptions = {
+      ...config.providerOptions,
+      custom: { ...existing, apiKey: envApiKey, apiKeyCommand: undefined },
+    };
+  } else if (envApiKeyCommand !== undefined) {
+    const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
+    config.providerOptions = {
+      ...config.providerOptions,
+      custom: { ...existing, apiKeyCommand: envApiKeyCommand, apiKey: undefined },
+    };
+  }
+
   const envChunking = process.env["LLM_REVIEWER_CHUNKING"];
   if (envChunking !== undefined) {
     if (envChunking !== "auto" && envChunking !== "always" && envChunking !== "never") {
@@ -165,6 +197,13 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
       config.providerOptions = {
         ...config.providerOptions,
         ollama: { baseUrl: cliOverrides.ollamaUrl },
+      };
+    }
+    if (cliOverrides.baseUrl !== undefined) {
+      const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
+      config.providerOptions = {
+        ...config.providerOptions,
+        custom: { ...existing, baseUrl: cliOverrides.baseUrl },
       };
     }
     if (cliOverrides.timeout !== undefined) {

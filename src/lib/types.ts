@@ -290,6 +290,7 @@ export interface CLIOverrides {
   provider?: string;
   chunking?: "auto" | "always" | "never";
   ollamaUrl?: string;
+  baseUrl?: string;
   timeout?: number;
 }
 

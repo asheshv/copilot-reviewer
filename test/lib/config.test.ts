@@ -716,6 +716,72 @@ describe("loadConfig", () => {
         name: "ConfigError",
       });
     });
+
+    it("LLM_REVIEWER_BASE_URL sets providerOptions.custom.baseUrl", async () => {
+      vi.stubEnv("LLM_REVIEWER_BASE_URL", "https://api.example.com/v1");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig({ provider: "custom" });
+
+      expect((config.providerOptions.custom as any)?.baseUrl).toBe("https://api.example.com/v1");
+    });
+
+    it("LLM_REVIEWER_BASE_URL throws ConfigError for malformed URL", async () => {
+      vi.stubEnv("LLM_REVIEWER_BASE_URL", "not-a-url");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      await expect(loadConfig()).rejects.toMatchObject({
+        code: "invalid_url",
+        name: "ConfigError",
+      });
+    });
+
+    it("LLM_REVIEWER_API_KEY sets providerOptions.custom.apiKey", async () => {
+      vi.stubEnv("LLM_REVIEWER_API_KEY", "sk-test");
+      vi.stubEnv("LLM_REVIEWER_BASE_URL", "https://api.example.com/v1");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig({ provider: "custom" });
+
+      expect((config.providerOptions.custom as any)?.apiKey).toBe("sk-test");
+    });
+
+    it("LLM_REVIEWER_API_KEY_COMMAND sets providerOptions.custom.apiKeyCommand", async () => {
+      vi.stubEnv("LLM_REVIEWER_API_KEY_COMMAND", "echo sk-from-cmd");
+      vi.stubEnv("LLM_REVIEWER_BASE_URL", "https://api.example.com/v1");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig({ provider: "custom" });
+
+      expect((config.providerOptions.custom as any)?.apiKeyCommand).toBe("echo sk-from-cmd");
+    });
+
+    it("LLM_REVIEWER_API_KEY takes precedence over LLM_REVIEWER_API_KEY_COMMAND", async () => {
+      vi.stubEnv("LLM_REVIEWER_API_KEY", "sk-static-wins");
+      vi.stubEnv("LLM_REVIEWER_API_KEY_COMMAND", "echo sk-should-not-be-used");
+      vi.stubEnv("LLM_REVIEWER_BASE_URL", "https://api.example.com/v1");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig({ provider: "custom" });
+
+      expect((config.providerOptions.custom as any)?.apiKey).toBe("sk-static-wins");
+      expect((config.providerOptions.custom as any)?.apiKeyCommand).toBeUndefined();
+    });
+
+    it("--base-url CLI override takes precedence over LLM_REVIEWER_BASE_URL env var", async () => {
+      vi.stubEnv("LLM_REVIEWER_BASE_URL", "https://env.example.com/v1");
+      mockGitRoot(null);
+      mockAccess.mockRejectedValue(createENOENT());
+
+      const config = await loadConfig({ provider: "custom", baseUrl: "https://cli.example.com/v1" });
+
+      expect((config.providerOptions.custom as any)?.baseUrl).toBe("https://cli.example.com/v1");
+    });
   });
 
   describe("config file path resolution", () => {
