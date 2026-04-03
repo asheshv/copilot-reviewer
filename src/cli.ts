@@ -107,6 +107,7 @@ interface CLIOpts {
   provider?: string;
   chunking?: string;
   ollamaUrl?: string;
+  baseUrl?: string;
   timeout?: string;
 }
 
@@ -149,6 +150,7 @@ export async function handleReview(
       cliOverrides.chunking = opts.chunking as "auto" | "always" | "never";
     }
     if (opts.ollamaUrl) cliOverrides.ollamaUrl = opts.ollamaUrl;
+    if (opts.baseUrl) cliOverrides.baseUrl = opts.baseUrl;
     if (opts.timeout) cliOverrides.timeout = parseInt(opts.timeout, 10);
 
     progress("Loading configuration... ");
@@ -246,12 +248,13 @@ export async function handleReview(
 // Handler: models
 // ============================================================================
 
-export async function handleModels(opts: Pick<CLIOpts, "provider" | "ollamaUrl"> = {}): Promise<number> {
+export async function handleModels(opts: Pick<CLIOpts, "provider" | "ollamaUrl" | "baseUrl"> = {}): Promise<number> {
   try {
     progress("Fetching models... ");
     const cliOverrides: CLIOverrides = {};
     if (opts.provider) cliOverrides.provider = opts.provider;
     if (opts.ollamaUrl) cliOverrides.ollamaUrl = opts.ollamaUrl;
+    if (opts.baseUrl) cliOverrides.baseUrl = opts.baseUrl;
     const config = await loadConfig(cliOverrides);
     const provider = await createProvider(config);
     process.on("exit", () => provider.dispose());
@@ -337,6 +340,7 @@ interface StatusOpts {
   json?: boolean;
   provider?: string;
   ollamaUrl?: string;
+  baseUrl?: string;
 }
 
 /**
@@ -438,6 +442,7 @@ export async function handleStatus(opts: StatusOpts): Promise<number> {
     const cliOverrides: CLIOverrides = {};
     if (opts.provider) cliOverrides.provider = opts.provider;
     if (opts.ollamaUrl) cliOverrides.ollamaUrl = opts.ollamaUrl;
+    if (opts.baseUrl) cliOverrides.baseUrl = opts.baseUrl;
 
     const config = await loadConfig(cliOverrides);
 
@@ -612,9 +617,10 @@ export function buildProgram(): Command {
     .option("--prompt <text>", "Override review prompt")
     .option("--config <path>", "Override config file path")
     .option("--verbose", "Enable debug logging to stderr")
-    .option("--provider <name>", "Review provider: copilot, ollama")
+    .option("--provider <name>", "Review provider: copilot, ollama, custom, custom:<name>")
     .option("--chunking <mode>", "Chunking mode: auto, always, never")
     .option("--ollama-url <url>", "Ollama base URL")
+    .option("--base-url <url>", "Base URL for custom provider (OpenAI-compatible endpoint)")
     .option("--timeout <seconds>", "Request timeout in seconds (default: 30 for copilot, 120 for ollama)")
     .addOption(new Option("--mcp", "Start as MCP server").hideHelp())
     .action(async (mode: string, modeArg: string | undefined, opts: CLIOpts) => {
@@ -626,9 +632,10 @@ export function buildProgram(): Command {
   program
     .command("models")
     .description("List available models")
-    .option("--provider <name>", "Review provider: copilot, ollama")
+    .option("--provider <name>", "Review provider: copilot, ollama, custom, custom:<name>")
     .option("--ollama-url <url>", "Ollama base URL")
-    .action(async (opts: Pick<CLIOpts, "provider" | "ollamaUrl">) => {
+    .option("--base-url <url>", "Base URL for custom provider")
+    .action(async (opts: Pick<CLIOpts, "provider" | "ollamaUrl" | "baseUrl">) => {
       const code = await handleModels(opts);
       process.exit(code);
     });
@@ -645,8 +652,9 @@ export function buildProgram(): Command {
     .command("status")
     .description("Show provider connectivity and configuration status")
     .option("--json", "Output status as JSON")
-    .option("--provider <name>", "Review provider: copilot, ollama")
+    .option("--provider <name>", "Review provider: copilot, ollama, custom, custom:<name>")
     .option("--ollama-url <url>", "Ollama base URL")
+    .option("--base-url <url>", "Base URL for custom provider")
     .action(async (opts: StatusOpts) => {
       const code = await handleStatus(opts);
       process.exit(code);
