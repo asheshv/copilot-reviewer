@@ -279,6 +279,15 @@ async function loadConfigLayer(
       const knownKeys = availableProviders();
       for (const key of Object.keys(jsonConfig.providerOptions)) {
         if (!knownKeys.includes(key)) {
+          // Suppress warning if this looks like a custom provider config (has baseUrl)
+          const entry = jsonConfig.providerOptions[key];
+          if (entry && typeof entry === "object" && "baseUrl" in entry) {
+            // Valid custom provider config — validate baseUrl
+            if (typeof (entry as Record<string, unknown>).baseUrl === "string") {
+              validateUrl((entry as Record<string, unknown>).baseUrl as string, jsonPath);
+            }
+            continue;
+          }
           const suggestion = knownKeys.find((k) => levenshtein(key, k) <= 2);
           const hint = suggestion ? ` Did you mean '${suggestion}'?` : "";
           process.stderr.write(`Warning: unknown providerOptions key '${key}'.${hint}\n`);
