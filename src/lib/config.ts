@@ -42,6 +42,18 @@ function validateUrl(urlStr: string, context: string): void {
   }
 }
 
+/** Merge fields into config.providerOptions.custom without unsafe casts. */
+function mergeCustomOption(
+  config: ResolvedConfig,
+  fields: Record<string, string | undefined>,
+): void {
+  const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
+  config.providerOptions = {
+    ...config.providerOptions,
+    custom: { ...existing, ...fields },
+  };
+}
+
 /** Return the global config directory path. */
 function getGlobalConfigDir(): string {
   return join(homedir(), ".llm-reviewer");
@@ -105,28 +117,16 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
 
   if (envBaseUrl !== undefined) {
     validateUrl(envBaseUrl, "LLM_REVIEWER_BASE_URL");
-    const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
-    config.providerOptions = {
-      ...config.providerOptions,
-      custom: { ...existing, baseUrl: envBaseUrl },
-    };
+    mergeCustomOption(config, { baseUrl: envBaseUrl });
   }
 
   // LLM_REVIEWER_API_KEY takes precedence over LLM_REVIEWER_API_KEY_COMMAND.
   // When an env var is set, clear the opposite type to prevent the factory's
   // "command > static" rule from overriding the env var.
   if (envApiKey !== undefined) {
-    const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
-    config.providerOptions = {
-      ...config.providerOptions,
-      custom: { ...existing, apiKey: envApiKey, apiKeyCommand: undefined },
-    };
+    mergeCustomOption(config, { apiKey: envApiKey, apiKeyCommand: undefined });
   } else if (envApiKeyCommand !== undefined) {
-    const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
-    config.providerOptions = {
-      ...config.providerOptions,
-      custom: { ...existing, apiKeyCommand: envApiKeyCommand, apiKey: undefined },
-    };
+    mergeCustomOption(config, { apiKeyCommand: envApiKeyCommand, apiKey: undefined });
   }
 
   const envChunking = process.env["LLM_REVIEWER_CHUNKING"];
@@ -201,11 +201,7 @@ export async function loadConfig(cliOverrides?: CLIOverrides): Promise<ResolvedC
     }
     if (cliOverrides.baseUrl !== undefined) {
       validateUrl(cliOverrides.baseUrl, "--base-url");
-      const existing = (config.providerOptions.custom ?? {}) as Record<string, unknown>;
-      config.providerOptions = {
-        ...config.providerOptions,
-        custom: { ...existing, baseUrl: cliOverrides.baseUrl },
-      };
+      mergeCustomOption(config, { baseUrl: cliOverrides.baseUrl });
     }
     if (cliOverrides.timeout !== undefined) {
       config.timeout = cliOverrides.timeout;

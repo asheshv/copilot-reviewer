@@ -60,7 +60,7 @@ export class CustomProvider extends OpenAIChatProvider {
 
   async listModels(): Promise<ModelInfo[]> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10_000);
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const headers = await this.getHeaders();
       const response = await fetch(`${this.baseUrl}/models`, {
