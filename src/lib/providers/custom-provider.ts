@@ -210,12 +210,13 @@ export class CustomProvider extends OpenAIChatProvider {
       const redacted = typeof exitCode === "number"
         ? `API key command exited with code ${exitCode}`
         : "API key command failed (non-zero exit or signal)";
+      // Do NOT pass err as cause — execFile errors contain the full command
+      // string in their message/cmd properties, which would leak secrets.
       throw new ConfigError(
         "key_command_failed",
         redacted,
         "",
         false,
-        err instanceof Error ? err : undefined,
       );
     }
   }

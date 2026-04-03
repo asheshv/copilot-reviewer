@@ -245,6 +245,14 @@ describe("createProvider — custom", () => {
     });
   });
 
+  it("throws ConfigError for 'custom:' with empty suffix", async () => {
+    await expect(
+      createProvider({ ...baseConfig, provider: "custom:", providerOptions: {} })
+    ).rejects.toSatisfy((err: unknown) => {
+      return err instanceof ConfigError && (err as ConfigError).code === "missing_provider_config";
+    });
+  });
+
   it("throws ConfigError for unknown provider without custom: prefix", async () => {
     await expect(
       createProvider({ ...baseConfig, provider: "unknown" })

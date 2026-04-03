@@ -83,15 +83,17 @@ describe("CustomProvider", () => {
       );
     });
 
-    it("does not leak command string in error message on failure", async () => {
+    it("does not leak command string in error message or cause on failure", async () => {
       const secretCommand = "echo $MY_SECRET_TOKEN && exit 1";
       const provider = new CustomProvider("custom", BASE_URL, {
         apiKeyCommand: secretCommand,
       });
-      const err = await (provider as any).getHeaders().catch((e: unknown) => e);
+      const err = await (provider as any).getHeaders().catch((e: unknown) => e) as ConfigError;
       expect(err).toBeInstanceOf(ConfigError);
       expect(err.message).not.toContain(secretCommand);
       expect(err.message).not.toContain("MY_SECRET_TOKEN");
+      // Cause must not leak the command either
+      expect(err.cause).toBeUndefined();
     });
 
     it("throws ConfigError when command produces empty output (redacted message)", async () => {

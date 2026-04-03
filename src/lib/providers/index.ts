@@ -35,6 +35,15 @@ function resolveCustomConfig(
   const isNamed = providerName.startsWith("custom:");
   const suffix = isNamed ? providerName.slice("custom:".length) : null;
 
+  if (isNamed && !suffix) {
+    throw new ConfigError(
+      "missing_provider_config",
+      "Provider name 'custom:' requires a suffix (e.g., 'custom:groq'). Use 'custom' for the default custom provider.",
+      "",
+      false,
+    );
+  }
+
   if (suffix) {
     const opts = config.providerOptions?.[suffix] as Record<string, unknown> | undefined;
     if (!opts?.baseUrl) {
