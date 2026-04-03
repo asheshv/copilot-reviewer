@@ -264,7 +264,7 @@ export async function handleModels(): Promise<CallToolResult> {
 
 export function createMcpServer(): McpServer {
   const server = new McpServer(
-    { name: "llm-reviewer", version: "1.0.0" },
+    { name: "llm-reviewer", version: "1.1.0" },
     { capabilities: { tools: {} } },
   );
 

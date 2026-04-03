@@ -22,7 +22,7 @@ import type { StatusOutput } from "./lib/types.js";
 import { review, reviewStream } from "./lib/review.js";
 import { detectHighSeverity, formatNdjsonChunk } from "./lib/formatter.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 // ============================================================================
 // Helpers
